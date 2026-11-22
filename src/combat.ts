@@ -3,6 +3,7 @@ import { arena, cover, H, textures, tones, W } from './art'
 import { type Effect, type Relic, type Weapon } from './data'
 import { floors, type Room } from './dungeon'
 import { encounters, enemyTiming } from './balance'
+import { canWalk, castleHeight, castleSolids, castleSpawn, castleWidth, drawCastle, nearbyStation, stations } from './castle'
 import { activeDamage, bellHeal, bellRadius, chaliceHeal, dotDuration, dotRate, duskHeal, frostDuration, mirrorRange, rimeDamage, shadowDamage, wardDuration } from './relic-effects'
 
 const clamp = Phaser.Math.Clamp
@@ -17,7 +18,7 @@ const relicElements:Record<Effect,string>={fire:'Cinder Heart',poison:'Bog Idol'
 type Effects = Partial<Record<Effect,number>>
 type Point = {x:number;y:number}
 type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>}
-type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;radius:number;damage:number}
+type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;pattern:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number}
 type Hazard = Point & {r:number;warn:number;life:number;damage:number;color:number}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
@@ -26,7 +27,7 @@ export interface CombatBridge {
  level(name:string):number; relicLevel(name:string):number; switchWeapon():void; curse(name:string):boolean; blessed(name:string):boolean;
  consumeDodgeDraught():boolean; attackPower(damage:number):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
  killed(elite:boolean, large:boolean):void; clear():void; enter(id:number, dx:number,dy:number):void; interact():void; sound(frequency:number):void;
- refresh():void;
+ refresh():void; ready():void; castleStatus():void;
 }
 export class Combat extends Phaser.Scene {
  bridge!:CombatBridge
@@ -35,6 +36,8 @@ export class Combat extends Phaser.Scene {
  fx!:Phaser.GameObjects.Graphics
  keys!:Record<string,Phaser.Input.Keyboard.Key>
  mode='cover'
+ castleLabels:Phaser.GameObjects.Text[]=[]
+ castleWalls:ReturnType<typeof castleSolids>=[]
  foes:Foe[]=[]
  shots:Shot[]=[]
  hazards:Hazard[]=[]
@@ -65,11 +68,50 @@ export class Combat extends Phaser.Scene {
   })
   this.input.on('wheel',()=>{if(this.mode==='run'&&!this.bridge.paused)this.bridge.switchWeapon()})
   this.showCover()
+  this.bridge.ready()
  }
  showCover() {
   this.mode='cover'; this.reset()
+  this.leaveCastleCamera()
   this.player.setPosition(415,218).setScale(2.9).setVisible(true).clearTint().setAlpha(1)
   cover(this.backdrop.clear())
+ }
+ showCastle(improvements:(name:string)=>number){
+  const inCastle=this.mode==='castle'
+  this.mode='castle'
+  if(!inCastle){
+   this.reset()
+   this.player.setPosition(castleSpawn.x,castleSpawn.y).setScale(1).setVisible(true).clearTint().setAlpha(1).setFlipX(false)
+   const camera=this.cameras.main
+   camera.setBounds(0,0,castleWidth,castleHeight).centerOn(this.player.x,this.player.y)
+   camera.startFollow(this.player,true,.12,.12)
+   this.castleLabels=stations.map(s=>this.add.text(s.x+s.w/2,s.y+12,s.name.toUpperCase(),{
+    fontFamily:'monospace',fontSize:'10px',color:'#ffe0af',backgroundColor:'#29212c',padding:{x:4,y:2},
+   }).setOrigin(.5,0).setDepth(2))
+  }
+  const unlock={forge:this.bridge.level('Forge')>0,tower:this.bridge.level('Fleet Step')>0}
+  this.castleWalls=castleSolids(unlock)
+  drawCastle(this.backdrop,unlock,improvements)
+ }
+ leaveCastleCamera(){
+  this.cameras.main.stopFollow().removeBounds().setScroll(0,0)
+  this.castleLabels.forEach(label=>label.destroy())
+  this.castleLabels=[]
+ }
+ castleStation(){return nearbyStation(this.player)}
+ walkCastle(delta:number){
+  const {D,A,S,W}=this.keys
+  const p=this.player
+  const dx=Number(D.isDown)-Number(A.isDown),dy=Number(S.isDown)-Number(W.isDown)
+  const magnitude=Math.hypot(dx,dy)
+  if(magnitude){
+   const pace=132*delta/magnitude
+   if(canWalk(this.castleWalls,{x:p.x+dx*pace,y:p.y}))p.x+=dx*pace
+   if(canWalk(this.castleWalls,{x:p.x,y:p.y+dy*pace}))p.y+=dy*pace
+   if(dx)p.setFlipX(dx<0)
+  }
+  p.setScale(1,magnitude?1+Math.sin(this.elapsed/48)*.06:1)
+  this.bridge.castleStatus()
  }
  reset() {
   this.foes.forEach(foe=>foe.sprite.destroy())
@@ -78,6 +120,7 @@ export class Combat extends Phaser.Scene {
  }
  showRoom(dx=0,dy=0) {
   this.mode='run'; this.reset()
+  this.leaveCastleCamera()
   const { room, floor, challenge }=this.bridge
   this.player.setScale(1).setPosition(dx>0?35:dx<0?W-35:W/2,dy>0?37:dy<0?H-37:H/2).setVisible(true).clearTint()
   this.attackQueued=false;this.rollQueued=false;this.relicQueued=false
@@ -93,8 +136,13 @@ export class Combat extends Phaser.Scene {
     let specials=0
     for(let i=0;i<count;i++){
      const angle=(i+.3)*Math.PI*2/count
-     const x=W/2+Math.cos(angle)*145
-     const y=H/2+Math.sin(angle)*83
+     let x=W/2+Math.cos(angle)*151
+     let y=H/2+Math.sin(angle)*89
+     if(Math.hypot(x-this.player.x,y-this.player.y)<76){
+      const choices=[{x:87,y:101},{x:171,y:69},{x:247,y:125},{x:420,y:186},{x:335,y:218}]
+      const safe=choices.find(p=>Math.hypot(p.x-this.player.x,p.y-this.player.y)>=76&&this.foes.every(f=>Math.hypot(f.x-p.x,f.y-p.y)>33))
+      if(safe){x=safe.x;y=safe.y}
+     }
      const foe=this.spawn(x,y,(floor*2+room.patch+i)%7,false,false,specials<count-2)
      if(foe.role==='special')specials++
     }
@@ -135,11 +183,11 @@ export class Combat extends Phaser.Scene {
   const elements:Effect[]=['fire','poison','frost','lightning','shadow']
   const effect=!large&&allowSpecial&&Math.random()<.19?elements[(kind+floor)%elements.length]:undefined
   const role=large||elite||effect||(allowSpecial&&kind>=2&&Math.random()<encounters.specialShare)?'special':'melee'
-  const max=(boss?420+floor*180:large?160+floor*95:36+floor*19)*(elite?1.8:1)*(large&&challenge.has('Iron Bosses')?1.45:1)
+  const max=(boss?encounters.bossHealth[floor]:large?encounters.minibossHealth[floor]:Math.round(encounters.basicHealth[floor]*[1.16,.85,.94,1.11,1,.89,.96][kind]))*(elite?1.8:1)*(large&&challenge.has('Iron Bosses')?1.45:1)
   const sprite=this.add.image(x,y,boss?'boss'+floor:'foe'+kind).setScale(boss?2.65:large?1.8:1).setDepth(3)
   if(effect) sprite.setTint(effectColor[effect])
   if(elite&&!effect) sprite.setTint(0xf2d393)
-  const foe:Foe={x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+450+Math.random()*350,warn:0,angle:0,slow:0,slowPower:0,burn:0,dot:0,phase:0,role,flank:(this.foes.length%2?1:-1),strike:0,radius:boss?21:large?15:8,damage:(large?15:encounters.basicDamage)+floor*3+(elite?encounters.eliteBonusDamage:0)+(effect?2:0)}
+  const foe:Foe={x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+450+Math.random()*350,warn:0,angle:0,slow:0,slowPower:0,burn:0,dot:0,phase:0,role,flank:(this.foes.length%2?1:-1),strike:0,attacks:0,pattern:0,echo:null,radius:boss?21:large?15:8,damage:(boss?encounters.bossDamage[floor]:large?encounters.minibossDamage[floor]:encounters.basicDamage[floor]+kind%3)+(elite?encounters.eliteBonusDamage:0)+(effect?2:0)}
   this.foes.push(foe)
   return foe
  }
@@ -274,6 +322,11 @@ export class Combat extends Phaser.Scene {
   const range=Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)
   const angle=Math.atan2(p.y-foe.y,p.x-foe.x)
   const phase=foe.boss?(foe.hp<foe.max*.32?2:foe.hp<foe.max*.66?1:0):0
+  if(foe.echo&&this.elapsed>=foe.echo.time){
+   const echo=foe.echo
+   foe.echo=null
+   for(let i=0;i<echo.count;i++)this.projectile(foe.x,foe.y,echo.angle+i*Math.PI*2/echo.count,echo.speed,480,foe.damage,false,b.floor===2&&foe.boss?{fire:1}:{})
+  }
   if(phase>foe.phase) {
    foe.phase=phase
    this.flash(foe.x,foe.y,65,0xda94e1)
@@ -281,19 +334,23 @@ export class Combat extends Phaser.Scene {
    if(b.floor===1) for(const [dx,dy] of [[-60,0],[60,0],[0,-51],[0,51]]) this.hazards.push({
     x:clamp(foe.x+dx,26,W-26),y:clamp(foe.y+dy,28,H-28),r:31,warn:this.elapsed+780,life:this.elapsed+1010,damage:foe.damage+5,color:0xc8b46e,
    })
-   if(b.floor===2&&phase===2) for(let i=0;i<16;i++) this.projectile(foe.x,foe.y,i*Math.PI/8,106,500,foe.damage,false,{fire:1})
-   if(b.floor===0) for(const dy of [-27,27]) this.spawn(foe.x,clamp(foe.y+dy,35,H-35),0)
+   if(b.floor===2&&phase===2) foe.echo={time:this.elapsed+760,angle:angle+.2,count:16,speed:126}
+   if(b.floor===0) for(const dy of [-36,36]){
+    const x=clamp(foe.x-Math.cos(angle)*57,42,W-42)
+    const y=clamp(foe.y-Math.sin(angle)*57+dy,42,H-42)
+    if(Math.hypot(p.x-x,p.y-y)>46)this.spawn(x,y,0)
+   }
   }
   if(foe.warn&&this.elapsed>=foe.warn) {
    foe.warn=0
    const cooldown=foe.large?enemyTiming.bossCooldown:foe.role==='melee'?enemyTiming.meleeCooldown:foe.role==='ranged'?enemyTiming.rangedCooldown:enemyTiming.specialCooldown
    foe.next=this.elapsed+cooldown*(foe.elite?.8:1)-phase*160
    foe.strike=this.elapsed+160
-   const bossPatterns=[[0,2,5],[4,2,4],[3,2,5]]
-   const pattern=foe.boss?bossPatterns[b.floor][(Math.floor(this.elapsed/1050)+phase)%3]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind
+   const pattern=foe.pattern
+   foe.attacks++
    const color=foe.effect?effectColor[foe.effect]:tones[foe.kind]
    if(pattern===0||pattern===3) {
-    const distance=pattern===3?Math.min(84,range):0
+    const distance=pattern===3?Math.min(foe.large?85:69,Math.max(0,range-12)):0
     foe.x=clamp(foe.x+Math.cos(foe.angle)*distance,26,W-26)
     foe.y=clamp(foe.y+Math.sin(foe.angle)*distance,28,H-28)
     const reach=foe.large?48:encounters.meleeReach
@@ -305,30 +362,44 @@ export class Combat extends Phaser.Scene {
     const count=foe.large?3+phase:1
     for(let i=0;i<count;i++) this.hazards.push({x:clamp(p.x+(i%2?(i+1)*16:-i*13),26,W-26),y:clamp(p.y+i*12-8,28,H-28),r:foe.large?22:16,warn:this.elapsed+420+i*70,life:this.elapsed+1120+i*70,damage:foe.damage,color})
    } else {
-    const radial=pattern===5||pattern===6||(foe.boss&&phase>0)
-    const count=radial?7+phase*4+(b.challenge.has('Projectile Storm')?4:0):pattern===2?3:1
+    const radial=pattern===5||pattern===6
+    const count=radial?(foe.boss?9+phase*3:foe.large?8:7)+(b.challenge.has('Projectile Storm')?4:0):pattern===2?(foe.large?5:3):1
     const speed=enemyTiming.projectileSpeed+b.floor*12+phase*9
-    const bend=foe.role==='ranged'?Phaser.Math.Angle.RotateTo(foe.angle,Math.atan2(p.y+clamp(this.velocity.y*.16,-24,24)-foe.y,p.x+clamp(this.velocity.x*.16,-24,24)-foe.x),.32):foe.angle
+    const bend=foe.role==='ranged'?Phaser.Math.Angle.RotateTo(foe.angle,Math.atan2(p.y+clamp(this.velocity.y*.24,-34,34)-foe.y,p.x+clamp(this.velocity.x*.24,-34,34)-foe.x),.48):foe.angle
+    if(radial&&foe.large&&(foe.boss?phase>0:foe.hp<foe.max*.45)&&!foe.echo){
+     foe.echo={time:this.elapsed+260,angle:bend+Math.PI/count,count,speed:speed*.84}
+    }
     for(let i=0;i<count;i++){
      const direction=bend+(radial?i*Math.PI*2/count:(i-(count-1)/2)*.24)
      this.projectile(foe.x,foe.y,direction,speed,480,foe.damage,false,foe.boss&&b.floor===2?{fire:1}:foe.effect?{[foe.effect]:1}:{})
     }
    }
   } else if(!foe.warn&&this.elapsed>=foe.next) {
-   const reach=foe.large?300:foe.role==='melee'?encounters.meleeReach+2:foe.role==='ranged'?235:foe.kind===0?27:foe.kind===3?100:275
+   const bossPatterns=[[3,2,5,0],[4,2,4,5],[3,5,2,5]]
+   const cycle=foe.boss?bossPatterns[b.floor]:[foe.kind,foe.kind===3?2:3,foe.kind===5?4:5]
+   const pattern=foe.large?cycle[(foe.attacks+phase)%cycle.length]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind
+   const reach=pattern===0?(foe.large?52:encounters.meleeReach+2):pattern===3?(foe.large?126:101):foe.large?300:foe.role==='ranged'?235:275
    if(range<reach){
     const windup=foe.large?enemyTiming.bossWindup:foe.role==='melee'?enemyTiming.meleeWindup:foe.role==='ranged'?enemyTiming.rangedWindup:enemyTiming.specialWindup
     foe.warn=this.elapsed+windup-phase*65
     foe.angle=angle
+    foe.pattern=pattern
    }
   }
   const melee=foe.role==='melee'||(!foe.large&&foe.role==='special'&&foe.kind===0)
-  const desired=foe.large?62:melee?15:foe.role==='ranged'?112:foe.kind===3?37:98
+  const desired=foe.large?40:melee?15:foe.role==='ranged'?112:foe.kind===3?37:98
   const retreat=foe.role==='ranged'&&range<82
-  if(!foe.warn&&(range>desired||retreat)){
-   const speed=(foe.large?36:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7
+  if(!foe.warn&&(range>desired||retreat||(foe.role==='ranged'&&range>=82))){
+   const speed=(foe.large?52:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7
    const step=speed*(foe.elite?enemyTiming.eliteSpeed:1)*(b.challenge.has('Swift Foes')?1.27:1)*(foe.slow>this.elapsed?1-foe.slowPower:1)*delta
-   const approach=retreat?angle+Math.PI:angle+(melee&&range>34?foe.flank*.34:0)
+   const strafe=foe.kind%2===0?foe.flank:Math.sin(this.elapsed/450+foe.kind)>0?1:-1
+   let approach=retreat?angle+Math.PI:angle+(melee&&range>34?foe.flank*.42:0)
+   if(foe.role==='ranged'&&range>=82&&range<=desired)approach=angle+strafe*Math.PI/2
+   const out=(a:number)=>foe.x+Math.cos(a)*12<25||foe.x+Math.cos(a)*12>W-25||foe.y+Math.sin(a)*12<26||foe.y+Math.sin(a)*12>H-26
+   if(out(approach)&&(retreat||foe.role==='ranged')){
+    const side=angle+strafe*Math.PI/2
+    approach=out(side)?angle-strafe*Math.PI/2:side
+   }
    foe.x+=Math.cos(approach)*step;foe.y+=Math.sin(approach)*step
    for(const other of this.foes){
     if(other===foe||other.hp<=0)continue
@@ -407,10 +478,11 @@ export class Combat extends Phaser.Scene {
  }
  update(_time:number, dt:number) {
   const b=this.bridge
-  if(this.mode!=='run'||!b||b.paused) return
+  if(!b||b.paused||this.mode==='cover') return
   dt=Math.min(35,dt)
   this.elapsed+=dt
   const delta=dt/1000
+  if(this.mode==='castle'){this.walkCastle(delta);return}
   this.move(delta)
   if(b.paused||this.mode!=='run') return
   b.gainCharge('time',delta)

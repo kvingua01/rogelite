@@ -5,6 +5,7 @@ import { challenges, colors, contracts, contractClear, decode, rarity, rangedTra
 import { floors, generate, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
 import { economy, relicPower, relicSlotCount } from './balance'
+import { type Building } from './castle'
 import './style.css'
 
 const hud=document.querySelector<HTMLElement>('#hud')!
@@ -49,19 +50,27 @@ class Game implements CombatBridge {
  dodgeDraughts=0
  mandatory=false
  stock=new Map<number,Choice[]>()
+ hasSavedGame=false
+ castleHUD=''
  constructor(){
   let raw:null|string=null
   try { raw=localStorage.getItem(saveKey) } catch { /* Private browsing can block storage. */ }
   this.save=decode(raw)
+  this.hasSavedGame=raw!==null
   this.scene.bridge=this
   new Phaser.Game({type:Phaser.AUTO,parent:'game',width:W,height:H,pixelArt:true,roundPixels:true,backgroundColor:'#201722',scene:[this.scene],input:{keyboard:{capture:[32]}}})
   this.main()
   document.querySelector('#help')!.addEventListener('click',()=>{if(!this.mandatory)this.settings(this.returnAction())})
   window.addEventListener('keydown',event=>{
-   if(event.target instanceof HTMLSelectElement||event.target instanceof HTMLInputElement) return
+   if(event.code!=='Escape'&&(event.target instanceof HTMLSelectElement||event.target instanceof HTMLInputElement)) return
    const inRun=this.scene.mode==='run'
    if(event.code==='Escape'||(inRun&&event.code==='Tab'&&(!this.paused||this.menu==='map'))||(inRun&&event.code==='Space'&&!this.paused)) event.preventDefault()
    if(event.repeat||this.mandatory) return
+   if(this.scene.mode==='castle'){
+    if(event.code==='Escape')this.paused?this.castle():this.castlePause()
+    if(event.code==='KeyE'&&!this.paused)this.castleInteract()
+    return
+   }
    if(event.code==='Escape'){
     if(this.scene.mode==='run') this.paused?this.resume():this.pause()
     else if(this.menu!=='main') this.castle()
@@ -82,7 +91,8 @@ class Game implements CombatBridge {
    if(!this.paused&&event.code==='KeyF') this.interact()
   })
  }
- persist(){try {localStorage.setItem(saveKey,JSON.stringify(this.save))} catch {this.notice('Browser storage is unavailable')}}
+ ready(){if(this.hasSavedGame)this.castle()}
+ persist(){try {localStorage.setItem(saveKey,JSON.stringify(this.save));this.hasSavedGame=true} catch {this.notice('Browser storage is unavailable')}}
  level(name:string){return this.save.upgrades[name]??0}
  relicLevel(name:string){return this.equipped.some(relic=>relic?.name===name)?this.levels.get(name)??0:0}
  get power(){return relicPower(this.equipped.filter(Boolean).length)}
@@ -265,7 +275,7 @@ class Game implements CombatBridge {
     {title:'Open chest',action:()=>{
      room.used=true;this.scene.drawRoom();this.gold(economy.chestGold[this.floor])
      if(Math.random()<.35){this.save.materials++;this.earnedMaterials++;this.persist()}
-     if(Math.random()<.21)this.heal(Math.random()<.22?35:15)
+     if(Math.random()<.12)this.heal(Math.random()<.15?35:15)
      const discovery=this.blueprint(.43)
      const relic=this.randomRelic()
      this.mandatory=true
@@ -292,13 +302,21 @@ class Game implements CombatBridge {
    }},{title:'Leave',action:()=>this.resume()}])
   }
   if(room.kind==='Secret'||room.kind==='Event'){
-   this.dialog(room.kind,room.kind==='Secret'?'Hidden sanctuary':'The pilgrim’s fountain','Drink once to restore 40 HP.',[{title:'Drink',action:()=>{
-    room.used=true;this.scene.drawRoom();this.heal(40+this.level('Springwater')*10)
-    if(room.kind==='Secret'){this.gold(economy.secretGold);const found=this.blueprint(.85);if(found)this.notice(found)}
+   const claim=(drink:boolean)=>{
+    room.used=true;this.scene.drawRoom()
+    if(drink)this.heal(40+this.level('Springwater')*10)
+    if(room.kind==='Secret'){
+     this.gold(economy.secretGold);const found=this.blueprint(.85);if(found)this.notice(found)
+    }else if(!drink)this.gold(economy.eventGold)
     this.resume()
-   }},...(room.kind==='Event'?[{title:'Search the shrine',detail:'Collect '+economy.eventGold+' gold instead of drinking.',action:()=>{
-    room.used=true;this.gold(economy.eventGold);this.scene.drawRoom();this.resume()
-   }}]:[]),{title:'Leave',action:()=>this.resume()}])
+   }
+   this.dialog(room.kind,room.fountain?'The pilgrim’s fountain':room.kind==='Secret'?'Hidden sanctuary':'Abandoned shrine',
+    room.fountain?'Drink once to restore 40 HP.':'Search the remains for supplies.',[
+     ...(room.fountain?[{title:'Drink',action:()=>claim(true)}]:[]),
+     {title:'Search the shrine',detail:room.kind==='Event'?'Collect '+economy.eventGold+' gold.':undefined,action:()=>claim(false)},
+     {title:'Leave',action:()=>this.resume()},
+    ])
+
   }
  }
  shop(){
@@ -329,7 +347,7 @@ class Game implements CombatBridge {
  }
  finish(won:boolean){
   if(won){this.save.victories++;this.persist()}
-  this.mandatory=false;this.resetRelics();this.carriedWeapons.clear();this.halt()
+  this.mandatory=false;this.resetRelics();this.carriedWeapons.clear();this.castle()
   const minutes=Math.floor((performance.now()-this.started)/60000)
   this.dialog(won?'Victory':'Fallen in battle',won?'The Fallen King is slain':'Return to the keep',`${floors[this.floor].name} · ${minutes} min · ${this.earnedGold} gold earned · ${this.earnedMaterials} forge material. ${won&&this.save.victories===1?'Challenges unlocked.':''}`,[{title:'Return to castle',action:()=>this.castle()}])
   this.menu='summary'
@@ -366,20 +384,36 @@ class Game implements CombatBridge {
   overlay.querySelector('#play')!.addEventListener('click',()=>{if(this.scene.player){this.sound(320);this.castle()}})
  }
  castle(){
-  this.halt();this.menu='castle';this.mandatory=false
-  const keep=document.createElement('div');keep.className='keep';keep.setAttribute('aria-label','Castle buildings')
-  keep.innerHTML='<span>♜</span>'
-  for(const building of new Set(upgrades.filter(u=>this.level(u.name)).map(u=>u.building))){
-   const tower=document.createElement('span');tower.title=building;tower.textContent='◆';keep.append(tower)
-  }
-  this.mount('The Last Keep','Castle hub',`${this.save.gold} gold · ${this.save.materials} forge material · ${this.save.victories} victories`,[
-   {title:'Begin descent',detail:'Enter the Forgotten Castle',action:()=>this.newRun()},
-   {title:'Starting loadout',detail:this.save.loadout.filter(Boolean).join(' / '),action:()=>this.chooseLoadout()},
-   {title:'Blacksmith',detail:'Blueprints and permanent weapons',action:()=>this.craft()},
-   {title:'Castle upgrades',detail:'Expand your keep',action:()=>this.improve()},
-   {title:'Challenges',detail:this.save.victories?'Optional run modifiers':'Unlocks after first victory',disabled:!this.save.victories,action:()=>this.challengeMenu()},
+  if(!this.hasSavedGame)this.persist()
+  this.scene.showCastle(name=>upgrades.filter(u=>u.building===name).reduce((sum,u)=>sum+this.level(u.name),0))
+  this.menu='castle';this.mandatory=false;this.paused=false
+  overlay.replaceChildren()
+  hud.hidden=false
+  this.castleHUD=''
+  this.castleStatus()
+ }
+ castleStatus(){
+  const station=this.scene.castleStation()
+  const display=`<div class="castle-status"><strong>The Last Keep</strong><div>◆ ${this.save.gold} gold · ${this.save.materials} forge material</div></div><div class="castle-controls">WASD · Walk &nbsp; ESC · Pause</div>${station?`<div class="castle-prompt">Press E · ${station.name==='Dungeon Gate'?'Enter the dungeon':'Talk to '+station.person}</div>`:''}`
+  if(display!==this.castleHUD){hud.innerHTML=display;this.castleHUD=display}
+ }
+ castlePause(){
+  this.dialog('The Last Keep','Paused','',[
+   {title:'Resume',action:()=>this.castle()},
+   {title:'Settings and controls',action:()=>this.settings(()=>this.castlePause())},
    {title:'Main menu',action:()=>this.main()},
-  ],keep)
+  ])
+ }
+ castleInteract(){
+  const station=this.scene.castleStation()
+  if(!station)return
+  this.sound(290)
+  switch(station.name){
+   case 'Blacksmith': this.craft();break
+   case 'Main Hall': this.dialog(station.name,station.person,station.line,[{title:'Back to castle',action:()=>this.castle()}]);break
+   case 'Dungeon Gate': this.challengeMenu(station.line);break
+   default: this.improve(station.name,station.person,station.line)
+  }
  }
  chooseLoadout(){
   const form=document.createElement('div')
@@ -401,35 +435,37 @@ class Game implements CombatBridge {
   this.dialog('Castle armory','Starting equipment','Select one weapon for each slot.',[{title:'Back to castle',action:()=>this.castle()}],form)
  }
  craft(){
-  this.dialog('Permanent crafting','Blacksmith',`${this.save.materials} forge material available.`,[
+  this.dialog('Permanent crafting','Blacksmith',`Mara · Bring a blueprint and metal, and I’ll forge you something worth carrying. ${this.save.materials} forge material available.`,[
    ...weapons.filter(w=>w.parent).map(w=>{
     const crafted=this.save.unlocked.includes(w.name), blueprint=this.save.blueprints.includes(w.name), parent=this.save.unlocked.includes(w.parent!)
     const advanced=w.cost!>=4&&!this.level('Forge')
     return {title:w.name,detail:crafted?'Crafted':`${w.cost} material · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}${this.canEquipWeapon(w)?'':' · Requires '+rangedTraining}`,disabled:!this.canEquipWeapon(w)||crafted||!blueprint||!parent||advanced||this.save.materials<w.cost!,action:()=>{
      this.save.materials-=w.cost!;this.save.unlocked.push(w.name);this.persist();this.craft()
     }}
-   }),{title:'Back to castle',action:()=>this.castle()},
+   }),{title:'Starting equipment',action:()=>this.chooseLoadout()},
+   {title:'Workshop upgrades',action:()=>this.improve('Blacksmith','Mara the blacksmith','Unlock the forge annex for advanced recipes.')},
+   {title:'Back to castle',action:()=>this.castle()},
   ])
  }
- improve(){
-  this.dialog('Permanent progression','Castle upgrades',this.save.gold+' gold available.',[
-   ...upgrades.map(u=>{
+ improve(building:Building,person:string,line:string){
+  this.dialog(person,building,line+' '+this.save.gold+' gold available.',[
+   ...upgrades.filter(u=>u.building===building).map(u=>{
     const level=this.level(u.name),cost=upgradeCost(u.cost,level)
     return {title:u.name+' '+level+'/'+u.max,detail:`${u.building} · ${u.detail} · ${level>=u.max?'Maxed':cost+' gold'}${u.requires?' · Requires '+u.requires:''}`,disabled:level>=u.max||this.save.gold<cost||!!u.requires&&!this.level(u.requires),action:()=>{
-     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;if(u.name===rangedTraining)unlockRanged(this.save);this.persist();this.improve()
+     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;if(u.name===rangedTraining)unlockRanged(this.save);this.persist();this.scene.showCastle(name=>upgrades.filter(u=>u.building===name).reduce((sum,u)=>sum+this.level(u.name),0));this.castleStatus();this.improve(building,person,line)
     }}
    }),{title:'Back to castle',action:()=>this.castle()},
   ])
  }
- challengeMenu(){
+ challengeMenu(dialogue:string){
   const form=document.createElement('div')
-  for(const name of challenges){
+  for(const name of this.save.victories?challenges:[]){
    const label=document.createElement('label'), input=document.createElement('input')
    input.type='checkbox';input.checked=this.challenge.has(name)
    input.onchange=()=>input.checked?this.challenge.add(name):this.challenge.delete(name)
    label.append(input,name);form.append(label)
   }
-  this.dialog('Optional difficulty','Challenges','Each active modifier increases gold and main boss materials.',[{title:'Back to castle',action:()=>this.castle()}],form)
+  this.dialog('The gatekeeper','Dungeon Gate',dialogue+(this.save.victories?' Challenge modifiers increase gold and main boss materials.':' Challenge modifiers unlock after your first victory.'),[{title:'Begin descent',action:()=>this.newRun()},{title:'Back to castle',action:()=>this.castle()}],form)
  }
  returnAction():Handler{
   if(this.menu==='summary')return ()=>this.castle()
@@ -438,7 +474,7 @@ class Game implements CombatBridge {
   return ()=>this.castle()
  }
  settings(back:Handler){
-  this.dialog('Settings','Controls','WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I weapon inventory · R relic inventory · Tab map · Esc pause',[
+  this.dialog('Settings','Controls','Castle: WASD walk, E interact · Dungeon: WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I weapon inventory · R relic inventory · Tab map · Esc pause',[
    {title:this.save.mute?'Enable sound':'Mute sound',action:()=>{this.save.mute=!this.save.mute;this.persist();this.settings(back)}},
    {title:'Back',action:back},
   ])

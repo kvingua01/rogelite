@@ -11,6 +11,7 @@ test('300 layouts contain every room type and connect every patch to its minibos
   const rooms=generate(()=>((state=Math.imul(1664525,state)+1013904223>>>0)/2**32))
   assert.equal(new Set(rooms.map(r=>r.x+','+r.y)).size,rooms.length)
   for(const type of types)assert.ok(rooms.some(r=>r.kind===type),type)
+  assert.equal(rooms.filter(room=>room.fountain).length,1)
   const visit=(start,allowed)=>{
    const seen=new Set(),pending=[start]
    while(pending.length){

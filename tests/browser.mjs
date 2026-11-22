@@ -19,9 +19,62 @@ try {
   const {game}=await import('/src/main.ts')
   return Function('g','return ('+source+')(g)')(game)
  },fn.toString())
+ const atStation=async name=>{
+  await page.evaluate(async name=>{
+   const {game}=await import('/src/main.ts')
+   const {stations,stationPoint}=await import('/src/castle.ts')
+   const station=stations.find(s=>s.name===name)
+   const point=stationPoint(station)
+   game.scene.player.setPosition(point.x,point.y+(station.south?23:-23))
+  },name)
+  await page.keyboard.press('KeyE')
+ }
+ const walk=async (key,axis,limit,direction)=>{
+  await page.keyboard.down(key)
+  try{
+   const deadline=Date.now()+6500
+   while(Date.now()<deadline){
+    const position=await read(g=>[g.scene.player.x,g.scene.player.y])
+    if((position[axis==='x'?0:1]-limit)*direction>=0)return
+    await page.waitForTimeout(25)
+   }
+   throw new Error('Castle walk timed out at '+await read(g=>[g.scene.player.x,g.scene.player.y]))
+  } finally {await page.keyboard.up(key)}
+ }
  await page.goto(host)
  await page.locator('canvas').waitFor()
  await page.getByRole('button',{name:/Enter the Keep/}).click()
+ assert.deepEqual(await read(g=>[g.scene.mode,g.scene.player.x,g.scene.player.y]),['castle',440,270])
+ await page.keyboard.press('KeyE')
+ assert.equal(await read(g=>g.paused),false)
+ await walk('KeyA','x',101,-1)
+ await page.keyboard.down('KeyW')
+ await page.waitForTimeout(1100)
+ await page.keyboard.up('KeyW')
+ assert.ok(await read(g=>g.scene.player.y>=193),JSON.stringify(await read(g=>[g.scene.player.x,g.scene.player.y])))
+ await walk('KeyD','x',130,1)
+ await walk('KeyW','y',112,-1)
+ await page.getByText(/Press E · Talk to Mara/).waitFor()
+ await page.keyboard.press('KeyE')
+ await page.getByRole('heading',{name:'Blacksmith',exact:true}).waitFor()
+ const smithPosition=await read(g=>g.scene.player.y)
+ await page.keyboard.down('KeyS')
+ await page.waitForTimeout(170)
+ await page.keyboard.up('KeyS')
+ assert.equal(await read(g=>g.scene.player.y),smithPosition)
+ await page.keyboard.press('Escape')
+ assert.equal(await read(g=>g.scene.player.y),smithPosition)
+ for(const name of ['Main Hall','Training Grounds','Alchemist','Treasury','Watchtower']){
+  await atStation(name)
+  await page.getByRole('heading',{name:name==='Main Hall'?'The steward':name,exact:true}).waitFor()
+  await page.keyboard.press('Escape')
+ }
+ await read(g=>g.scene.player.setPosition(440,270))
+ await walk('KeyS','y',337,1)
+ await walk('KeyD','x',787,1)
+ await walk('KeyW','y',285,-1)
+ await page.getByText(/Press E · Enter the dungeon/).waitFor()
+ await page.keyboard.press('KeyE')
  await page.getByRole('button',{name:/Begin descent/}).click()
  await page.waitForSelector('.status')
  assert.match(await page.locator('.status').innerText(),/100 \/ 100 HP/)
@@ -44,9 +97,10 @@ try {
  assert.equal(await read(g=>g.loadout[1]),null)
  await read(g=>{g.finish(false);g.gold(125)})
  await page.getByRole('button',{name:'Return to castle'}).click()
- await page.getByRole('button',{name:/^Castle upgrades/}).click()
+ await atStation('Training Grounds')
  await page.getByRole('button',{name:/^Ranged Weapon Training 0/}).click()
  await page.getByRole('button',{name:'Back to castle'}).click()
+ await atStation('Dungeon Gate')
  await page.getByRole('button',{name:/Begin descent/}).click()
  await page.keyboard.press('KeyQ')
  assert.match(await page.locator('.selected').innerText(),/Wooden Bow/)
@@ -59,6 +113,8 @@ try {
  await page.keyboard.down('KeyD')
  await page.waitForTimeout(530)
  await page.keyboard.up('KeyD')
+ assert.equal(await read(g=>g.scene.foes.length),6)
+ assert.ok(await read(g=>g.scene.foes.every(f=>f.hp>=42&&f.damage>=14)))
  assert.deepEqual(await read(g=>[g.room.id,g.scene.locked]),[id,true],JSON.stringify(await read(g=>({p:[g.scene.player.x,g.scene.player.y],paused:g.paused,menu:g.menu}))))
  const meleeCheck=await read(g=>{
   const scene=g.scene
@@ -91,7 +147,7 @@ try {
   g.hp=health
   return result
  })
- assert.ok(meleeCheck?.chased&&meleeCheck.telegraph&&meleeCheck.damage>=11&&meleeCheck.shots===0&&meleeCheck.warningLines===0,JSON.stringify(meleeCheck))
+ assert.ok(meleeCheck?.chased&&meleeCheck.telegraph&&meleeCheck.damage>=14&&meleeCheck.shots===0&&meleeCheck.warningLines===0,JSON.stringify(meleeCheck))
  await read(g=>{const f=g.scene.foes[0];g.scene.player.setPosition(f.x-38,f.y);g.scene.nextAttack=0})
  const area=await page.locator('canvas').boundingBox()
  const point=await read(g=>({x:g.scene.foes[0].x,y:g.scene.foes[0].y}))
@@ -192,11 +248,22 @@ try {
  await page.keyboard.press('KeyE')
  await page.waitForFunction(async()=>{const{game}=await import('/src/main.ts');return game.charge===0})
  assert.ok(Math.abs(await read(g=>g.hp)-67.4)<.01)
- await read(g=>{g.gold(200);g.save.blueprints.push('Grave Axe');g.persist()})
+ await read(g=>{g.gold(600);g.save.blueprints.push('Grave Axe');g.persist()})
 
  for(const name of ['Skeleton King','Blighted Guardian','Fallen King']){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))
   assert.equal(await page.locator('.boss').innerText(),name)
+  const dodge=await read(g=>{
+   const scene=g.scene,foe=scene.foes[0],health=g.hp
+   foe.x=100;foe.y=100
+   scene.player.setPosition(126,100)
+   foe.angle=0;foe.pattern=0;foe.warn=scene.elapsed
+   scene.invulnerable=scene.elapsed+205
+   scene.enemy(foe,.016)
+   return {health,after:g.hp,damage:foe.damage,max:foe.max}
+  })
+  assert.equal(dodge.health,dodge.after)
+  assert.ok(dodge.damage>=24&&dodge.max>=570)
   await read(g=>g.scene.damage(g.scene.foes[0],100000))
   await page.getByText('Main boss defeated',{exact:true}).waitFor()
   await page.locator('.panel .cards button').first().click()
@@ -207,21 +274,33 @@ try {
  await page.getByRole('button',{name:'Return to castle'}).click()
  assert.equal(await read(g=>g.save.victories),1)
  assert.ok(await read(g=>g.save.materials)>=9)
- await page.getByRole('button',{name:/^Blacksmith/}).click()
+ const annex=()=>read(g=>g.scene.castleWalls.some(wall=>wall.kind==='annex'&&wall.x===(g.scene.player.x<200?168:788)))
+ await atStation('Blacksmith')
+ assert.ok(await annex())
  await page.getByRole('button',{name:/^Grave Axe/}).click()
- await page.getByRole('button',{name:'Back to castle'}).click()
- await page.getByRole('button',{name:/^Castle upgrades/}).click()
+ await page.getByRole('button',{name:'Workshop upgrades'}).click()
+ await page.getByRole('button',{name:/^Forge 0/}).click()
+ assert.equal(await annex(),false)
+ await page.keyboard.press('Escape')
+ await atStation('Watchtower')
+ assert.ok(await annex())
+ await page.getByRole('button',{name:/^Fleet Step 0/}).click()
+ assert.equal(await annex(),false)
+ await page.keyboard.press('Escape')
+ await atStation('Training Grounds')
  await page.getByRole('button',{name:/^Vitality 0/}).click()
  await page.reload()
- await page.getByRole('button',{name:/Enter the Keep/}).click()
+ await page.getByText('The Last Keep',{exact:true}).waitFor()
+ assert.equal(await read(g=>g.scene.mode),'castle')
+ assert.ok(await read(g=>g.scene.castleWalls.every(wall=>wall.kind!=='annex')))
  assert.deepEqual(await read(g=>[g.save.upgrades.Vitality,g.save.unlocked.includes('Grave Axe'),g.save.victories,g.save.loadout[1]]),[1,true,1,'Wooden Bow'])
- await page.getByRole('button',{name:/^Challenges/}).click()
+ await atStation('Dungeon Gate')
  await page.getByText('Swift Foes',{exact:true}).waitFor()
- await page.getByRole('button',{name:'Back to castle'}).click()
  await page.getByRole('button',{name:/Begin descent/}).click()
  const balances=await read(g=>[g.save.gold,g.save.materials])
  await read(g=>g.hurt(9999))
  await page.getByText('Fallen in battle',{exact:true}).waitFor()
+ assert.equal(await read(g=>g.scene.mode),'castle')
  assert.deepEqual(await read(g=>[g.save.gold,g.save.materials]),balances)
  assert.equal(await read(g=>g.carriedWeapons.size),0)
  assert.deepEqual(errors,[])

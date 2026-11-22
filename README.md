@@ -20,12 +20,14 @@ Open the URL Vite prints in a desktop browser.
 | Left mouse button | Attack |
 | Q or mouse wheel | Switch weapons |
 | Space | Dodge |
-| E | Activate the equipped relic |
+| E | Talk to a nearby castle NPC or activate the equipped relic in a dungeon |
 | F | Interact near a room's chest, altar, merchant, or other fixture |
 | I | Open or close the carried-weapons inventory |
 | R | Open or close relic equipment |
 | Tab | Expand the dungeon map |
 | Escape | Pause or return to combat |
+
+Walk around the castle with WASD. Approach a station and press E to use it. The Blacksmith handles crafting and starting equipment. Training Grounds, Alchemist, Treasury, and Watchtower each offer their own upgrades. Enter a run at the Dungeon Gate, where challenges appear after the first victory. Escape closes a station menu or opens the castle pause menu while walking.
 
 New saves start with the Rusty Sword. Buy Ranged Weapon Training at the castle for 125 gold to unlock the Wooden Bow and projectile slot. Existing ranged unlocks carry forward.
 
