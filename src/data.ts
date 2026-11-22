@@ -1,4 +1,5 @@
 import { economy } from './balance.ts'
+import { abyssalWeapon, bossMaterials, emptyBossMaterials, type BossMaterials } from './materials.ts'
 
 export type Effect = 'fire'|'poison'|'frost'|'lightning'|'shadow'
 export type Weapon = {name:string; damage:number; delay:number; range:number; slot:0|1; effect?:Effect; parent?:string; cost?:number}
@@ -13,6 +14,7 @@ export const weapons: Weapon[] = [
  {name:'Storm Staff',damage:36,delay:635,range:245,slot:1,effect:'lightning',parent:'Iron Crossbow',cost:3},
  {name:'Venom Wand',damage:36,delay:710,range:211,slot:1,effect:'poison',parent:'Iron Crossbow',cost:3},
  {name:'Night Knives',damage:36,delay:575,range:168,slot:1,effect:'shadow',parent:'Venom Wand',cost:4},
+ {name:abyssalWeapon,damage:68,delay:830,range:63,slot:0,effect:'shadow',parent:'Cinder Hammer',cost:5},
 ]
 export const rarity = ['Common','Rare','Epic','Legendary']
 export const colors = ['#9acb86','#84b8e7','#c392ec','#f4c476']
@@ -56,14 +58,21 @@ export const contracts = [
  {name:'Hollow Cup',debuff:'Receive half healing',blessing:'Restore 5 HP after combat',rooms:5},
  {name:'Broken Shield',debuff:'Dodge cooldown is doubled',blessing:'Shadow bolts pierce',rooms:3},
 ]
-export type Save = {version:2; gold:number; materials:number; blueprints:string[]; unlocked:string[]; loadout:[string,string|null]; upgrades:Record<string,number>; victories:number; mute:boolean}
-export const fresh = ():Save => ({version:2,gold:0,materials:0,blueprints:[],unlocked:['Rusty Sword'],loadout:['Rusty Sword',null],upgrades:{},victories:0,mute:false})
+export type Save = {version:3; gold:number; materials:number; bossMaterials:BossMaterials; abyssVictories:number; blueprints:string[]; unlocked:string[]; loadout:[string,string|null]; upgrades:Record<string,number>; victories:number; mute:boolean}
+export const fresh = ():Save => ({version:3,gold:0,materials:0,bossMaterials:emptyBossMaterials(),abyssVictories:0,blueprints:[],unlocked:['Rusty Sword'],loadout:['Rusty Sword',null],upgrades:{},victories:0,mute:false})
 export function decode(raw:string|null): Save {
  const base = fresh()
  try {
   const parsed = JSON.parse(raw ?? 'null')
-  if (parsed?.version !== 1 && parsed?.version !== 2) return base
+  if (parsed?.version !== 1 && parsed?.version !== 2 && parsed?.version !== 3) return base
   for (const key of ['gold','materials','victories'] as const) if (Number.isSafeInteger(parsed[key]) && parsed[key] >= 0) base[key] = parsed[key]
+  if(parsed.version===3){
+   if(Number.isSafeInteger(parsed.abyssVictories)&&parsed.abyssVictories>=0)base.abyssVictories=parsed.abyssVictories
+   for(const material of bossMaterials){
+    const count=parsed.bossMaterials?.[material]
+    if(Number.isSafeInteger(count)&&count>=0)base.bossMaterials[material]=count
+   }
+  }
   for (const key of ['blueprints','unlocked'] as const) if (Array.isArray(parsed[key])) base[key] = [...new Set([...base[key], ...weapons.filter(w=>parsed[key].includes(w.name)).map(w=>w.name)])]
   for (const slot of [0,1] as const) if (weapons.some(w=>w.slot===slot && w.name===parsed.loadout?.[slot] && base.unlocked.includes(w.name))) base.loadout[slot] = parsed.loadout[slot]
   for (const upgrade of upgrades) {

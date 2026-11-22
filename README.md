@@ -29,6 +29,10 @@ Open the URL Vite prints in a desktop browser.
 
 Walk around the castle with WASD. Approach a station and press E to use it. The Blacksmith handles crafting and starting equipment. Training Grounds, Alchemist, Treasury, and Watchtower each offer their own upgrades. Enter a run at the Dungeon Gate, where challenges appear after the first victory. Escape closes a station menu or opens the castle pause menu while walking.
 
+Each main boss grants one permanent material. The Blacksmith lists Cursed Bone, Blighted Heart, Infernal Core, Abyssal Essence, and Forge Scrap separately. Older general materials remain as Forge Scrap. Only the Abyssal Greatsword uses Abyssal Essence. Its blueprint can drop from the Abyssal Overlord.
+
+Defeating the Fallen King records a normal victory and opens an optional portal to the Abyssal Depths. You can finish the run or carry your current health and equipment into the fourth floor. Abyssal victories are tracked separately.
+
 New saves start with the Rusty Sword. Buy Ranged Weapon Training at the castle for 125 gold to unlock the Wooden Bow and projectile slot. Existing ranged unlocks carry forward.
 
 Buy weapons into your run inventory or equip them immediately. Your previous weapons stay available under I.

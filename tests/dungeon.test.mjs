@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {generate, floors} from '../src/dungeon.ts'
+import {generate, generateAbyss, floors} from '../src/dungeon.ts'
 import {contractClear, decode, fresh, rangedTraining, relicLevel, unlockRanged, upgradeCost, upgrades} from '../src/data.ts'
 import {economy, encounters, relicPower} from '../src/balance.ts'
 
@@ -33,7 +33,7 @@ test('300 layouts contain every room type and connect every patch to its minibos
    assert.equal(visit(group[0].id,r=>group.includes(r)).size,group.length)
   }
  }
- assert.deepEqual(floors.map(f=>f.boss),['Skeleton King','Blighted Guardian','Fallen King'])
+ assert.deepEqual(floors.map(f=>f.boss),['Skeleton King','Blighted Guardian','Fallen King','Abyssal Overlord'])
 })
 
 test('save decoding preserves progression and validates loadout against slots and unlocks',()=>{
@@ -77,7 +77,7 @@ test('procedural floor gold estimates stay inside the economy targets',()=>{
   return generate(()=>((state=Math.imul(1664525,state)+1013904223>>>0)/2**32))
  })
  const averageRooms=layouts.reduce((sum,rooms)=>sum+rooms.filter(room=>room.kind==='Combat').length,0)/layouts.length
- const floorGold=encounters.enemies.map((count,floor)=>{
+ const floorGold=encounters.enemies.slice(0,3).map((count,floor)=>{
   const eliteChance=encounters.eliteShare+floor*.035
   const enemyGold=eliteChance*economy.eliteGold[floor]+(1-eliteChance)*economy.normalDropChance*economy.normalGold
   return averageRooms*count*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold
@@ -110,12 +110,71 @@ test('miniboss hit counts, shop burst, and sustained weapon damage stay in range
  for(const hp of encounters.minibossHealth){
   const hits=(weapon)=>Math.ceil(hp/weapon.damage)
   assert.ok(hits(sword)>=25&&hits(sword)<=40)
-  for(const weapon of weapons.filter(w=>w.parent)){
+  for(const weapon of weapons.filter(w=>w.parent&&w.name!=='Abyssal Greatsword')){
    const strong=weapon.name==='Cinder Hammer'
    assert.ok(hits(weapon)>=(strong?10:15)&&hits(weapon)<=(strong?17:25),weapon.name)
    assert.ok(weapon.damage/weapon.delay*1000<=80,weapon.name)
    // Even three critical vollies with the spread pellet cap stay below full health.
    assert.ok(weapon.damage*1.6*(weapon.slot?1.24:1)*3<hp,weapon.name)
   }
+ }
+})
+
+test('Abyss layouts round the Fallen King floor size and keep all doors connected',()=>{
+ for(const sourceSize of [16,18,19,20,21,22,24,32])for(let seed=1;seed<=60;seed++){
+  let state=seed
+  const rooms=generateAbyss(sourceSize,()=>((state=Math.imul(1664525,state)+1013904223>>>0)/2**32))
+  assert.equal(rooms.length,Math.round(sourceSize*3/8))
+  assert.equal(rooms.filter(r=>r.kind==='Boss').length,1)
+  assert.equal(new Set(rooms.map(r=>r.x+','+r.y)).size,rooms.length)
+  const seen=new Set(),pending=[0]
+  while(pending.length){
+   const id=pending.pop()
+   if(seen.has(id))continue
+   seen.add(id)
+   for(const next of rooms[id].neighbors){
+    assert.ok(rooms[next].neighbors.includes(id))
+    assert.equal(Math.abs(rooms[id].x-rooms[next].x)+Math.abs(rooms[id].y-rooms[next].y),1)
+    pending.push(next)
+   }
+  }
+  assert.equal(seen.size,rooms.length)
+ }
+})
+
+test('only the Greatsword needs the fourth boss; legacy materials remain scrap',async()=>{
+ const {weapons}=await import('../src/data.ts')
+ const {recipes,canCraft,payRecipe,emptyBossMaterials,bossMaterials,abyssalWeapon}=await import('../src/materials.ts')
+ const legacy=decode(JSON.stringify({...fresh(),version:2,materials:99,bossMaterials:{'Abyssal Essence':99},gold:12,abyssVictories:0}))
+ assert.equal(legacy.materials,99)
+ assert.deepEqual(legacy.bossMaterials,emptyBossMaterials())
+ const recipesWithAbyss=Object.entries(recipes).filter(([,recipe])=>recipe['Abyssal Essence'])
+ assert.deepEqual(recipesWithAbyss.map(([name])=>name),[abyssalWeapon])
+ const greatsword=weapons.find(w=>w.name===abyssalWeapon)
+ assert.ok(weapons.filter(w=>w.slot===0&&w!==greatsword).every(w=>w.damage<greatsword.damage&&w.damage/w.delay<greatsword.damage/greatsword.delay))
+ assert.ok(3*greatsword.damage<encounters.bossHealth[0])
+ assert.ok(weapons.filter(w=>w.parent&&w.name!==abyssalWeapon).every(w=>recipes[w.name]&&w.parent!==abyssalWeapon))
+ const firstOnly={materials:999,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':999}}
+ for(const weapon of ['Frost Pike','Cinder Hammer','Storm Staff','Night Knives',abyssalWeapon])assert.equal(canCraft(firstOnly,recipes[weapon]),false,weapon)
+ const full={materials:10,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':10,'Blighted Heart':10,'Infernal Core':10}}
+ for(const weapon of weapons.filter(w=>w.parent&&w.name!==abyssalWeapon))assert.ok(canCraft(full,recipes[weapon.name]))
+ assert.equal(payRecipe(full,recipes[abyssalWeapon]),false)
+ full.bossMaterials['Abyssal Essence']=2
+ assert.ok(bossMaterials.every(key=>recipes[abyssalWeapon][key]>0))
+ assert.ok(payRecipe(full,recipes[abyssalWeapon]))
+ assert.deepEqual(Object.values(full.bossMaterials),[7,5,8,0])
+ assert.deepEqual(decode(JSON.stringify({...fresh(),bossMaterials:full.bossMaterials,abyssVictories:2})).bossMaterials,full.bossMaterials)
+})
+
+test('the Overlord has four exact thresholds and higher pressure in each phase',async()=>{
+ const {abyssPhase,abyssEnemies,overlordPhases}=await import('../src/abyss.ts')
+ assert.deepEqual([100,75,74,50,49,25,24].map(hp=>abyssPhase(hp,100)),[0,0,1,1,2,2,3])
+ assert.equal(abyssEnemies.length,5)
+ assert.equal(new Set(abyssEnemies.map(foe=>JSON.stringify(foe.patterns))).size,5)
+ assert.ok(overlordPhases[0].hp>encounters.bossHealth[2]*2)
+ assert.ok(overlordPhases[0].damage>encounters.bossDamage[2])
+ for(let phase=1;phase<4;phase++){
+  assert.ok(overlordPhases[phase].pace>overlordPhases[phase-1].pace)
+  assert.ok(overlordPhases[phase].cooldown<overlordPhases[phase-1].cooldown)
  }
 })

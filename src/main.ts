@@ -2,10 +2,11 @@ import Phaser from 'phaser'
 import { Combat, type CombatBridge } from './combat'
 import { H, W } from './art'
 import { challenges, colors, contracts, contractClear, decode, rarity, rangedTraining, unlockRanged, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
-import { floors, generate, sample, type Room } from './dungeon'
+import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
 import { economy, relicPower, relicSlotCount } from './balance'
 import { type Building } from './castle'
+import { abyssalWeapon, bossMaterials, canCraft, emptyBossMaterials, payRecipe, recipeCost, recipes } from './materials'
 import './style.css'
 
 const hud=document.querySelector<HTMLElement>('#hud')!
@@ -46,6 +47,9 @@ class Game implements CombatBridge {
  started=0
  earnedGold=0
  earnedMaterials=0
+ earnedBossMaterials=emptyBossMaterials()
+ normalCompleted=false
+ firstNormalVictory=false
  statsBonus=0
  dodgeDraughts=0
  mandatory=false
@@ -105,7 +109,7 @@ class Game implements CombatBridge {
   this.refresh()
  }
  canEquipWeapon(weapon:Weapon){return weapon.slot===0||this.level(rangedTraining)>0}
- dungeonWeapons(){return weapons.filter(w=>w.parent&&this.canEquipWeapon(w))}
+ dungeonWeapons(){return weapons.filter(w=>w.parent&&w.name!==abyssalWeapon&&this.canEquipWeapon(w))}
  resetRelics(){
   this.levels.clear()
   this.equipped.fill(null)
@@ -180,8 +184,8 @@ class Game implements CombatBridge {
   const rank=weights.findIndex(weight=>(roll-=weight)<0)
   return sample(relics.filter(relic=>relic.rank===rank))
  }
- blueprint(chance:number){
-  const available=weapons.filter(w=>w.parent&&!this.save.blueprints.includes(w.name))
+ blueprint(chance:number,abyssOnly=false){
+  const available=weapons.filter(w=>w.parent&&(w.name===abyssalWeapon)===abyssOnly&&!this.save.blueprints.includes(w.name))
   if(!available.length||Math.random()>=chance)return ''
   const name=sample(available).name
   this.save.blueprints.push(name);this.persist()
@@ -193,12 +197,13 @@ class Game implements CombatBridge {
   for(const weapon of this.loadout)if(weapon)this.carriedWeapons.add(weapon)
   this.maxHP=100+this.level('Vitality')*15;this.hp=this.maxHP
   this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
-  this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.statsBonus=0;this.dodgeDraughts=0
-  this.scene.nextRoll=0;this.scene.nextAttack=0
+  this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.earnedBossMaterials=emptyBossMaterials();this.normalCompleted=false;this.firstNormalVictory=false;this.statsBonus=0;this.dodgeDraughts=0
+  this.scene.nextRoll=0;this.scene.nextAttack=0;this.scene.greatswordSwings=0
   this.beginFloor(0)
  }
  beginFloor(floor:number){
-  this.floor=floor;this.rooms=generate();this.stock.clear()
+  const rooms=floor===3?generateAbyss(this.rooms.length||20):generate()
+  this.floor=floor;this.rooms=rooms;this.stock.clear()
   this.enter(0,0,0);this.resume()
   this.notice(floors[floor].name)
  }
@@ -226,26 +231,47 @@ class Game implements CombatBridge {
   }
   if(kind==='Boss'){
    this.gold(economy.bossGold[this.floor])
-   const amount=this.floor+2+this.challenge.size
-   this.save.materials+=amount;this.earnedMaterials+=amount
-   const discovery=this.blueprint(.58)
+   const material=bossMaterials[this.floor]
+   this.save.bossMaterials[material]++
+   this.earnedBossMaterials[material]++
+   const discovery=this.blueprint(this.floor===3?.68:.58,this.floor===3)
+   if(this.floor===2&&!this.normalCompleted){
+    this.normalCompleted=true
+    this.firstNormalVictory=this.save.victories===0
+    this.save.victories++
+   }
+   if(this.floor===3)this.save.abyssVictories++
    this.persist()
-   const finish=()=>this.floor===2?this.finish(true):this.beginFloor(this.floor+1)
+   const finish=()=>this.floor===3?this.finish(true):this.floor===2?this.openAbyss():this.beginFloor(this.floor+1)
    const loot=shuffled(relics.filter(r=>r.name!==this.active?.name))
    const first=this.randomRelic(true)
    const other=loot.find(r=>r.rank<=this.floor+1&&r!==first)??loot[0]
    const weapon=sample(this.dungeonWeapons())
    this.mandatory=true
-   this.dialog('Main boss defeated',this.scene.bossName,`+${amount} forge material. Choose one reward. ${discovery}`,[
+   this.dialog('Main boss defeated',this.scene.bossName,`+1 ${material}. Choose one reward. ${discovery}`,[
     this.relicChoice(first,finish),this.relicChoice(other,finish),
     {title:weapon.name,detail:this.weaponStats(weapon),action:()=>this.compare(weapon,finish)},
    ])
   }
  }
+ openAbyss(){
+  this.room.portal=true
+  this.scene.drawRoom()
+  this.refresh()
+  this.abyssChoice()
+ }
+ abyssChoice(){
+  this.dialog('Normal victory achieved','The Abyssal Depths',
+   'A dark portal opens beyond the Fallen King. Your normal victory and rewards are saved. Enter with your current gear and health, or return to the castle.',[
+    {title:'Enter the Abyss',action:()=>this.beginFloor(3)},
+    {title:'Complete normal run',action:()=>this.finish(true)},
+    {title:'Stay in the throne room',action:()=>this.resume()},
+   ])
+ }
  relicChoice(relic:Relic,done:Handler):Choice{
   return {title:relic.name,detail:rarity[relic.rank]+' · '+relic.detail,action:()=>this.addRelic(relic,done)}
  }
- weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}`}
+ weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}${w.name===abyssalWeapon?' · Every fourth swing releases a piercing void crescent':''}`}
  compare(w:Weapon,done:Handler,purchase?:(apply:Handler)=>void){
   if(!this.canEquipWeapon(w)){done();return}
   const current=this.loadout[w.slot]
@@ -268,6 +294,7 @@ class Game implements CombatBridge {
  interact(){
   const {room}=this
   if(Phaser.Math.Distance.Between(this.scene.player.x,this.scene.player.y,W/2,H/2)>42)return
+  if(room.portal){this.abyssChoice();return}
   if(room.kind==='Shop'){this.shop();return}
   if(room.used)return
   if(room.kind==='Treasure'){
@@ -331,7 +358,7 @@ class Game implements CombatBridge {
     this.save.gold-=cost;this.persist();apply()
    }
    const gear=(slot:number):Choice=>{
-    const w=sample(weapons.filter(weapon=>weapon.parent&&weapon.slot===slot))
+    const w=sample(this.dungeonWeapons().filter(weapon=>weapon.slot===slot))
     const choice:Choice={title:w.name,cost:price(34+this.floor*8),detail:price(34+this.floor*8)+' gold · '+this.weaponStats(w),action:()=>{
      const cost=price(34+this.floor*8)
      if(choice.disabled||this.save.gold<cost){this.notice('Insufficient gold');return}
@@ -346,10 +373,14 @@ class Game implements CombatBridge {
   ])
  }
  finish(won:boolean){
-  if(won){this.save.victories++;this.persist()}
+  const abyssWon=won&&this.floor===3
   this.mandatory=false;this.resetRelics();this.carriedWeapons.clear();this.castle()
   const minutes=Math.floor((performance.now()-this.started)/60000)
-  this.dialog(won?'Victory':'Fallen in battle',won?'The Fallen King is slain':'Return to the keep',`${floors[this.floor].name} · ${minutes} min · ${this.earnedGold} gold earned · ${this.earnedMaterials} forge material. ${won&&this.save.victories===1?'Challenges unlocked.':''}`,[{title:'Return to castle',action:()=>this.castle()}])
+  const materials=recipeCost({...this.earnedBossMaterials,scrap:this.earnedMaterials})
+  const title=abyssWon?'The Abyssal Overlord is slain':won?'The Fallen King is slain':'Return to the keep'
+  const detail=`${floors[this.floor].name} · ${minutes} min · ${this.earnedGold} gold earned${materials?' · '+materials:''}.${this.firstNormalVictory?' Challenges unlocked.':''}${!won&&this.normalCompleted?' Normal victory recorded.':''}`
+  this.dialog(abyssWon?'Abyssal victory':won?'Victory':'Fallen in battle',title,detail,[{title:'Return to castle',action:()=>this.castle()}])
+  if(abyssWon)overlay.querySelector('.panel')?.classList.add('abyss-victory')
   this.menu='summary'
  }
  halt(){this.paused=true;hud.hidden=true;if(this.scene.player)this.scene.showCover()}
@@ -394,7 +425,7 @@ class Game implements CombatBridge {
  }
  castleStatus(){
   const station=this.scene.castleStation()
-  const display=`<div class="castle-status"><strong>The Last Keep</strong><div>◆ ${this.save.gold} gold · ${this.save.materials} forge material</div></div><div class="castle-controls">WASD · Walk &nbsp; ESC · Pause</div>${station?`<div class="castle-prompt">Press E · ${station.name==='Dungeon Gate'?'Enter the dungeon':'Talk to '+station.person}</div>`:''}`
+  const display=`<div class="castle-status"><strong>The Last Keep</strong><div>◆ ${this.save.gold} gold · ${this.save.materials} Forge Scrap</div><div>${this.save.victories} victories · ${this.save.abyssVictories} Abyssal victories</div></div><div class="castle-controls">WASD · Walk &nbsp; ESC · Pause</div>${station?`<div class="castle-prompt">Press E · ${station.name==='Dungeon Gate'?'Enter the dungeon':'Talk to '+station.person}</div>`:''}`
   if(display!==this.castleHUD){hud.innerHTML=display;this.castleHUD=display}
  }
  castlePause(){
@@ -435,12 +466,14 @@ class Game implements CombatBridge {
   this.dialog('Castle armory','Starting equipment','Select one weapon for each slot.',[{title:'Back to castle',action:()=>this.castle()}],form)
  }
  craft(){
-  this.dialog('Permanent crafting','Blacksmith',`Mara · Bring a blueprint and metal, and I’ll forge you something worth carrying. ${this.save.materials} forge material available.`,[
+  this.dialog('Permanent crafting','Blacksmith',`Mara · Bring a blueprint and metal, and I’ll forge you something worth carrying. ${this.save.materials} Forge Scrap · ${bossMaterials.map(material=>material+' '+this.save.bossMaterials[material]).join(' · ')}.`,[
    ...weapons.filter(w=>w.parent).map(w=>{
     const crafted=this.save.unlocked.includes(w.name), blueprint=this.save.blueprints.includes(w.name), parent=this.save.unlocked.includes(w.parent!)
     const advanced=w.cost!>=4&&!this.level('Forge')
-    return {title:w.name,detail:crafted?'Crafted':`${w.cost} material · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}${this.canEquipWeapon(w)?'':' · Requires '+rangedTraining}`,disabled:!this.canEquipWeapon(w)||crafted||!blueprint||!parent||advanced||this.save.materials<w.cost!,action:()=>{
-     this.save.materials-=w.cost!;this.save.unlocked.push(w.name);this.persist();this.craft()
+    const recipe=recipes[w.name]
+    return {title:w.name,detail:crafted?'Crafted':`${recipeCost(recipe)} · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}${this.canEquipWeapon(w)?'':' · Requires '+rangedTraining}`,disabled:!this.canEquipWeapon(w)||crafted||!blueprint||!parent||advanced||!canCraft(this.save,recipe),action:()=>{
+     if(!payRecipe(this.save,recipe))return
+     this.save.unlocked.push(w.name);this.persist();this.craft()
     }}
    }),{title:'Starting equipment',action:()=>this.chooseLoadout()},
    {title:'Workshop upgrades',action:()=>this.improve('Blacksmith','Mara the blacksmith','Unlock the forge annex for advanced recipes.')},
@@ -465,7 +498,7 @@ class Game implements CombatBridge {
    input.onchange=()=>input.checked?this.challenge.add(name):this.challenge.delete(name)
    label.append(input,name);form.append(label)
   }
-  this.dialog('The gatekeeper','Dungeon Gate',dialogue+(this.save.victories?' Challenge modifiers increase gold and main boss materials.':' Challenge modifiers unlock after your first victory.'),[{title:'Begin descent',action:()=>this.newRun()},{title:'Back to castle',action:()=>this.castle()}],form)
+  this.dialog('The gatekeeper','Dungeon Gate',dialogue+(this.save.victories?' Challenge modifiers increase gold. Boss materials are fixed at one per defeat.':' Challenge modifiers unlock after your first victory.'),[{title:'Begin descent',action:()=>this.newRun()},{title:'Back to castle',action:()=>this.castle()}],form)
  }
  returnAction():Handler{
   if(this.menu==='summary')return ()=>this.castle()
@@ -567,11 +600,11 @@ class Game implements CombatBridge {
   const x=(room:Room)=>(room.x-minX)*18+9,y=(room:Room)=>(room.y-minY)*18+9
   const lines=visible.flatMap(r=>r.neighbors.filter(id=>id>r.id&&revealed.has(id)).map(id=>`<line x1="${x(r)}" y1="${y(r)}" x2="${x(this.rooms[id])}" y2="${y(this.rooms[id])}" stroke="#80646f" stroke-width="2"/>`))
   const glyph:Partial<Record<Room['kind'],string>>={Treasure:'+',Shop:'$',Boss:'B',Miniboss:'M','Curse Altar':'C',Trap:'!',Secret:'?',Blacksmith:'F',Event:'E'}
-  const nodes=visible.map(r=>`<rect x="${x(r)-6}" y="${y(r)-6}" width="12" height="12" fill="${r===this.room?'#b15e62':r.seen?'#554052':'#39303d'}" stroke="${r===this.room?'#ffd194':r.cleared?'#b49e9d':'#85647a'}"/>${glyph[r.kind]?`<text x="${x(r)}" y="${y(r)+3.6}" text-anchor="middle" fill="#eed7b1">${glyph[r.kind]}</text>`:''}`)
+  const nodes=visible.map(r=>`<rect x="${x(r)-6}" y="${y(r)-6}" width="12" height="12" fill="${r===this.room?'#b15e62':r.seen?'#554052':'#39303d'}" stroke="${r===this.room?'#ffd194':r.cleared?'#b49e9d':'#85647a'}"/>${r.portal||glyph[r.kind]?`<text x="${x(r)}" y="${y(r)+3.6}" text-anchor="middle" fill="#eed7b1">${r.portal?'◈':glyph[r.kind]}</text>`:''}`)
   return `<svg class="map" role="img" aria-label="${full?'Expanded dungeon map':'Dungeon minimap'}" viewBox="0 0 ${(maxX-minX+1)*18} ${(maxY-minY+1)*18}">${lines.join('')}${nodes.join('')}</svg>`
  }
  mapMenu(){
-  const map=document.createElement('div');map.innerHTML=this.mapMarkup(true)+'<p class="legend">+ Treasure · $ Shop · M Miniboss · B Main boss · C Altar · ! Trap · ? Secret · F Forge · E Event</p>'
+  const map=document.createElement('div');map.innerHTML=this.mapMarkup(true)+'<p class="legend">+ Treasure · $ Shop · M Miniboss · B Main boss · C Altar · ! Trap · ? Secret · F Forge · E Event · ◈ Abyssal portal</p>'
   this.dialog('Dungeon map',floors[this.floor].name,'Visited rooms and revealed routes.',[{title:'Close map',action:()=>this.resume()}],map)
   this.menu='map'
  }
@@ -580,14 +613,14 @@ class Game implements CombatBridge {
   const boss=this.scene.foes.find(f=>f.large&&f.hp>0)
   const area=floors[this.floor]
   const treasure=this.room.neighbors.map(id=>this.rooms[id]).find(room=>room.kind==='Treasure'&&!room.used)
-  const hint=this.room.kind==='Treasure'&&!this.room.used?'F · Open chest for a guaranteed relic'
+  const hint=this.room.portal?'F · Abyssal portal':this.room.kind==='Treasure'&&!this.room.used?'F · Open chest for a guaranteed relic'
    : !this.levels.size&&this.room.kind==='Entry'?'Find your first relic in the treasure room after the first fight'
    : !this.levels.size&&treasure&&!this.scene.locked?'Treasure chest '+(treasure.y<this.room.y?'north':'south')+' · Guaranteed relic'
    : !this.room.used&&['Shop','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
   const toast=performance.now()<this.toastTimer?this.toast:''
-  hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
+  hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${this.floor===3?area.name:area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
-   ${boss?`<div class="boss ${boss.mini?'miniboss-bar':''}">${this.scene.bossName}${boss.mini?' · Phase '+(boss.phase+1):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
+   ${boss?`<div class="boss ${boss.mini||this.floor===3?'miniboss-bar':''}">${this.scene.bossName}${boss.mini||this.floor===3?' · Phase '+(boss.phase+1)+(this.floor===3?' / 4':''):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
    <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Requires '+rangedTraining}">${i===0?'⚔':'➶'} ${w?.name??'Locked · '+rangedTraining}</span>`).join('')}</div>
    <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`

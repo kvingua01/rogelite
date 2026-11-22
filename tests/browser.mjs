@@ -369,7 +369,7 @@ try {
  await page.getByText('Miniboss reward',{exact:true}).waitFor()
  await page.locator('.panel .cards button').first().click()
  assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+4,miniBalances[1],miniBalances[2]+1])
- for(const name of ['Skeleton King','Blighted Guardian','Fallen King']){
+ for(const [name,material] of [['Skeleton King','Cursed Bone'],['Blighted Guardian','Blighted Heart'],['Fallen King','Infernal Core']]){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))
   assert.equal(await page.locator('.boss').innerText(),name)
   const dodge=await read(g=>{
@@ -385,18 +385,35 @@ try {
   assert.ok(dodge.damage>=24&&dodge.max>=570)
   await read(g=>g.scene.damage(g.scene.foes[0],100000))
   await page.getByText('Main boss defeated',{exact:true}).waitFor()
+  await page.getByText(new RegExp('^\\+1 '+material)).waitFor()
+  assert.equal(await page.evaluate(async material=>(await import('/src/main.ts')).game.save.bossMaterials[material],material),1)
   await page.locator('.panel .cards button').first().click()
   const equip=page.getByRole('button',{name:/^Keep /})
   if(await equip.isVisible())await equip.click()
  }
+ await page.getByRole('button',{name:'Complete normal run'}).click()
  await page.getByText('The Fallen King is slain',{exact:true}).waitFor()
  await page.getByRole('button',{name:'Return to castle'}).click()
  assert.equal(await read(g=>g.save.victories),1)
- assert.ok(await read(g=>g.save.materials)>=9)
+ assert.equal(await read(g=>g.save.materials),1)
+ assert.deepEqual(await read(g=>Object.values(g.save.bossMaterials)),[1,1,1,0])
+ await read(g=>{
+  g.newRun()
+  g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
+  g.scene.damage(g.scene.foes[0],100000)
+ })
+ await page.getByText('Main boss defeated',{exact:true}).waitFor()
+ await page.locator('.panel .cards button').first().click()
+ await read(g=>g.hurt(9999))
+ await page.getByText('Fallen in battle',{exact:true}).waitFor()
+ assert.deepEqual(await read(g=>Object.values(g.save.bossMaterials)),[2,1,1,0])
+ await page.getByRole('button',{name:'Return to castle'}).click()
  const annex=()=>read(g=>g.scene.castleWalls.some(wall=>wall.kind==='annex'&&wall.x===(g.scene.player.x<200?168:788)))
  await atStation('Blacksmith')
  assert.ok(await annex())
+ await page.getByText(/Cursed Bone 2 · Blighted Heart 1 · Infernal Core 1 · Abyssal Essence 0/).waitFor()
  await page.getByRole('button',{name:/^Grave Axe/}).click()
+ assert.deepEqual(await read(g=>Object.values(g.save.bossMaterials)),[0,1,1,0])
  await page.getByRole('button',{name:'Workshop upgrades'}).click()
  await page.getByRole('button',{name:/^Forge 0/}).click()
  assert.equal(await annex(),false)
@@ -422,6 +439,103 @@ try {
  assert.equal(await read(g=>g.scene.mode),'castle')
  assert.deepEqual(await read(g=>[g.save.gold,g.save.materials]),balances)
  assert.equal(await read(g=>g.carriedWeapons.size),0)
+ const enterAbyss=async ()=>{
+  const size=await read(g=>{
+   g.newRun()
+   g.beginFloor(2)
+   g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
+   g.scene.damage(g.scene.foes[0],100000)
+   return g.rooms.length
+  })
+  await page.getByText('Main boss defeated',{exact:true}).waitFor()
+  await page.locator('.panel .cards button').first().click()
+  await page.getByRole('button',{name:'Stay in the throne room'}).click()
+  assert.equal(await read(g=>g.room.portal),true)
+  await page.keyboard.press('KeyF')
+  await page.getByRole('button',{name:'Enter the Abyss'}).click()
+  assert.deepEqual(await read(g=>[g.floor,g.rooms.length]),[3,Math.round(size*3/8)])
+  await page.getByText('4 · Abyssal Depths',{exact:true}).waitFor()
+ }
+ await enterAbyss()
+ await page.keyboard.press('Tab')
+ await page.getByRole('heading',{name:'Abyssal Depths',exact:true}).waitFor()
+ await page.keyboard.press('Tab')
+ const abyssCombat=await read(async g=>{
+  const scene=g.scene
+  const {abyssEnemies,overlordPhases}=await import('/src/abyss.ts')
+  const room=g.rooms.find(r=>r.kind==='Combat')
+  const profiles=[]
+  for(const [index,expected] of abyssEnemies.entries()){
+   g.enter(room.id,0,0)
+   const foe=scene.foes.find(f=>f.kind===index)
+   scene.player.setPosition(215,141)
+   scene.invulnerable=Infinity
+   foe.x=280;foe.y=141;foe.next=scene.elapsed
+   scene.enemy(foe,.016)
+   scene.elapsed=foe.warn
+   const x=foe.x,shots=scene.shots.length
+   scene.enemy(foe,.016)
+   profiles.push({name:foe.abyss.name,attack:foe.abyssAttack,expected:expected.patterns[0],worked:foe.x!==x||scene.shots.length>shots||scene.pending.length>0||scene.foes.some(f=>f.summoned)})
+  }
+  g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
+  const boss=scene.foes[0],stages=[]
+  for(const [phase,ratio] of [1,.74,.49,.24].entries()){
+   scene.player.setPosition(225,145)
+   boss.x=276;boss.y=145;boss.hp=boss.max*ratio
+   scene.invulnerable=Infinity
+   scene.enemy(boss,.016)
+   const transition=phase>0?scene.pending.find(action=>action.owner===boss):null
+   if(transition){scene.elapsed=transition.time;transition.execute()}
+   boss.x=276;boss.y=145;boss.next=scene.elapsed;boss.warn=0
+   scene.enemy(boss,.016)
+   const expected=overlordPhases[phase].patterns[0]
+   const before=scene.shots.length+scene.hazards.length+scene.pending.length
+   scene.elapsed=boss.warn
+   scene.enemy(boss,.016)
+   stages.push({phase:boss.phase,attack:boss.abyssAttack,expected,worked:boss.strike>scene.elapsed&&(!phase||!!transition)&&
+    (scene.shots.length+scene.hazards.length+scene.pending.length>before||phase===0)})
+  }
+  const {weapons}=await import('/src/data.ts')
+  const old=g.loadout[0]
+  g.loadout[0]=weapons.find(w=>w.name==='Abyssal Greatsword');g.slot=0
+  scene.player.setPosition(185,145);boss.x=310;boss.y=145
+  const before=boss.hp
+  for(let hit=0;hit<4;hit++)scene.attack(0)
+  const crescent=scene.shots.find(shot=>shot.crescent)
+  if(crescent)scene.collision(crescent,555,.555)
+  g.loadout[0]=old
+  return {profiles,stages,health:boss.max,damage:boss.damage,crescentHit:boss.hp<before}
+ })
+ assert.equal(abyssCombat.profiles.length,5)
+ assert.equal(abyssCombat.stages.length,4)
+ for(const [phase,result] of abyssCombat.stages.entries()){
+  assert.equal(result.phase,phase)
+  assert.equal(result.attack,result.expected,JSON.stringify(result))
+  assert.ok(result.worked,JSON.stringify(result))
+ }
+ for(const result of abyssCombat.profiles){
+  assert.equal(result.attack,result.expected,JSON.stringify(result))
+  assert.ok(result.worked,JSON.stringify(result))
+ }
+ assert.ok(abyssCombat.health>=2700&&abyssCombat.damage>=54&&abyssCombat.crescentHit)
+ await read(g=>{
+  for(const foe of g.scene.foes)g.scene.damage(foe,100000)
+  const random=Math.random
+  Math.random=()=>0
+  try{g.clear()}finally{Math.random=random}
+ })
+ await page.getByText(/\+1 Abyssal Essence/).waitFor()
+ await page.locator('.panel .cards button').first().click()
+ await page.locator('.abyss-victory').getByText('The Abyssal Overlord is slain',{exact:true}).waitFor()
+ assert.deepEqual(await read(g=>[g.save.victories,g.save.abyssVictories,g.save.bossMaterials['Abyssal Essence'],g.save.blueprints.includes('Abyssal Greatsword')]),[2,1,1,true])
+ await page.getByRole('button',{name:'Return to castle'}).click()
+ await enterAbyss()
+ const abyssWallet=await read(g=>[g.save.gold,g.save.bossMaterials,g.save.victories,g.save.abyssVictories])
+ await read(g=>g.hurt(9999))
+ await page.getByText(/Normal victory recorded/).waitFor()
+ await page.reload()
+ await page.getByText('The Last Keep',{exact:true}).waitFor()
+ assert.deepEqual(await read(g=>[g.save.gold,g.save.bossMaterials,g.save.victories,g.save.abyssVictories]),abyssWallet)
  assert.deepEqual(errors,[])
  console.log('Chromium smoke test passed')
 } finally {
