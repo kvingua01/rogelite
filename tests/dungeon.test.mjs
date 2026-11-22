@@ -154,14 +154,20 @@ test('only the Greatsword needs the fourth boss; legacy materials remain scrap',
  assert.ok(weapons.filter(w=>w.slot===0&&w!==greatsword).every(w=>w.damage<greatsword.damage&&w.damage/w.delay<greatsword.damage/greatsword.delay))
  assert.ok(3*greatsword.damage<encounters.bossHealth[0])
  assert.ok(weapons.filter(w=>w.parent&&w.name!==abyssalWeapon).every(w=>recipes[w.name]&&w.parent!==abyssalWeapon))
- const firstOnly={materials:999,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':999}}
+ const firstOnly={gold:999,materials:999,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':999}}
  for(const weapon of ['Frost Pike','Cinder Hammer','Storm Staff','Night Knives',abyssalWeapon])assert.equal(canCraft(firstOnly,recipes[weapon]),false,weapon)
- const full={materials:10,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':10,'Blighted Heart':10,'Infernal Core':10}}
+ const full={gold:120,materials:10,bossMaterials:{...emptyBossMaterials(),'Cursed Bone':10,'Blighted Heart':10,'Infernal Core':10}}
  for(const weapon of weapons.filter(w=>w.parent&&w.name!==abyssalWeapon))assert.ok(canCraft(full,recipes[weapon.name]))
  assert.equal(payRecipe(full,recipes[abyssalWeapon]),false)
+ assert.equal(full.gold,120)
  full.bossMaterials['Abyssal Essence']=2
  assert.ok(bossMaterials.every(key=>recipes[abyssalWeapon][key]>0))
+ const shortOnGold={...structuredClone(full),gold:99}
+ const unchanged=structuredClone(shortOnGold)
+ assert.equal(payRecipe(shortOnGold,recipes[abyssalWeapon]),false)
+ assert.deepEqual(shortOnGold,unchanged)
  assert.ok(payRecipe(full,recipes[abyssalWeapon]))
+ assert.equal(full.gold,20)
  assert.deepEqual(Object.values(full.bossMaterials),[7,5,8,0])
  assert.deepEqual(decode(JSON.stringify({...fresh(),bossMaterials:full.bossMaterials,abyssVictories:2})).bossMaterials,full.bossMaterials)
 })
@@ -177,4 +183,12 @@ test('the Overlord has four exact thresholds and higher pressure in each phase',
   assert.ok(overlordPhases[phase].pace>overlordPhases[phase-1].pace)
   assert.ok(overlordPhases[phase].cooldown<overlordPhases[phase-1].cooldown)
  }
+})
+
+test('old inventory-only weapons are never promoted to permanent unlocks',()=>{
+ const existing={...fresh(),unlocked:['Rusty Sword','Grave Axe'],loadout:['Cinder Hammer','Night Knives'],
+  carriedWeapons:['Cinder Hammer','Night Knives'],temporaryWeapons:['Cinder Hammer','Night Knives']}
+ const migrated=decode(JSON.stringify(existing))
+ assert.deepEqual(migrated.unlocked,['Rusty Sword','Grave Axe'])
+ assert.deepEqual(migrated.loadout,['Rusty Sword',null])
 })

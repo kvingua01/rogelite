@@ -2,19 +2,19 @@ import { economy } from './balance.ts'
 import { abyssalWeapon, bossMaterials, emptyBossMaterials, type BossMaterials } from './materials.ts'
 
 export type Effect = 'fire'|'poison'|'frost'|'lightning'|'shadow'
-export type Weapon = {name:string; damage:number; delay:number; range:number; slot:0|1; effect?:Effect; parent?:string; cost?:number}
+export type Weapon = {name:string; damage:number; delay:number; range:number; slot:0|1; effect?:Effect; parent?:string; requiresForge?:boolean}
 export const weapons: Weapon[] = [
  {name:'Rusty Sword',damage:25,delay:350,range:42,slot:0},
  {name:'Wooden Bow',damage:8.5,delay:420,range:245,slot:1},
- {name:'Grave Axe',damage:43,delay:590,range:47,slot:0,parent:'Rusty Sword',cost:2},
- {name:'Frost Pike',damage:38,delay:565,range:68,slot:0,effect:'frost',parent:'Grave Axe',cost:3},
- {name:'Cinder Hammer',damage:55,delay:850,range:53,slot:0,effect:'fire',parent:'Grave Axe',cost:4},
- {name:'Shade Dagger',damage:36,delay:460,range:36,slot:0,effect:'shadow',parent:'Frost Pike',cost:4},
- {name:'Iron Crossbow',damage:37,delay:680,range:285,slot:1,parent:'Wooden Bow',cost:2},
- {name:'Storm Staff',damage:36,delay:635,range:245,slot:1,effect:'lightning',parent:'Iron Crossbow',cost:3},
- {name:'Venom Wand',damage:36,delay:710,range:211,slot:1,effect:'poison',parent:'Iron Crossbow',cost:3},
- {name:'Night Knives',damage:36,delay:575,range:168,slot:1,effect:'shadow',parent:'Venom Wand',cost:4},
- {name:abyssalWeapon,damage:68,delay:830,range:63,slot:0,effect:'shadow',parent:'Cinder Hammer',cost:5},
+ {name:'Grave Axe',damage:43,delay:590,range:47,slot:0,parent:'Rusty Sword'},
+ {name:'Frost Pike',damage:38,delay:565,range:68,slot:0,effect:'frost',parent:'Grave Axe'},
+ {name:'Cinder Hammer',damage:55,delay:850,range:53,slot:0,effect:'fire',parent:'Grave Axe',requiresForge:true},
+ {name:'Shade Dagger',damage:36,delay:460,range:36,slot:0,effect:'shadow',parent:'Frost Pike',requiresForge:true},
+ {name:'Iron Crossbow',damage:37,delay:680,range:285,slot:1,parent:'Wooden Bow'},
+ {name:'Storm Staff',damage:36,delay:635,range:245,slot:1,effect:'lightning',parent:'Iron Crossbow'},
+ {name:'Venom Wand',damage:36,delay:710,range:211,slot:1,effect:'poison',parent:'Iron Crossbow'},
+ {name:'Night Knives',damage:36,delay:575,range:168,slot:1,effect:'shadow',parent:'Venom Wand',requiresForge:true},
+ {name:abyssalWeapon,damage:68,delay:830,range:63,slot:0,effect:'shadow',parent:'Cinder Hammer',requiresForge:true},
 ]
 export const rarity = ['Common','Rare','Epic','Legendary']
 export const colors = ['#9acb86','#84b8e7','#c392ec','#f4c476']

@@ -6,7 +6,7 @@ import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
 import { economy, relicPower, relicSlotCount } from './balance'
 import { type Building } from './castle'
-import { abyssalWeapon, bossMaterials, canCraft, emptyBossMaterials, payRecipe, recipeCost, recipes } from './materials'
+import { abyssalWeapon, bossMaterials, emptyBossMaterials, hasRecipeMaterials, payRecipe, recipeCost, recipes } from './materials'
 import './style.css'
 
 const hud=document.querySelector<HTMLElement>('#hud')!
@@ -19,15 +19,14 @@ const icon=(relic:Relic)=>icons[relics.indexOf(relic)]
 const pct=(n:number)=>Math.round(n*100)+'%'
 const shuffled=<T,>(items:readonly T[])=>[...items].map(item=>({item,sort:Math.random()})).sort((a,b)=>a.sort-b.sort).map(({item})=>item)
 type Handler=()=>void
-type Choice={title:string; detail?:string; disabled?:boolean; cost?:number; action:Handler}
+type Choice={title:string; detail?:string; disabled?:boolean; action:Handler}
 let audio:AudioContext|undefined
 const bar=(value:number)=><string>`<i style="width:${Math.max(0,Math.min(100,value*100))}%"></i>`
 
 class Game implements CombatBridge {
  save:Save
  scene=new Combat()
- loadout:[Weapon,Weapon|null]=[weapons[0],null]
- carriedWeapons=new Set<Weapon>()
+ loadout:readonly [Weapon,Weapon|null]=[weapons[0],null]
  rooms:Room[]=[]
  room!:Room
  floor=0
@@ -53,7 +52,6 @@ class Game implements CombatBridge {
  statsBonus=0
  dodgeDraughts=0
  mandatory=false
- stock=new Map<number,Choice[]>()
  hasSavedGame=false
  castleHUD=''
  constructor(){
@@ -109,7 +107,6 @@ class Game implements CombatBridge {
   this.refresh()
  }
  canEquipWeapon(weapon:Weapon){return weapon.slot===0||this.level(rangedTraining)>0}
- dungeonWeapons(){return weapons.filter(w=>w.parent&&w.name!==abyssalWeapon&&this.canEquipWeapon(w))}
  resetRelics(){
   this.levels.clear()
   this.equipped.fill(null)
@@ -193,8 +190,6 @@ class Game implements CombatBridge {
  }
  newRun(){
   this.loadout=[selectWeapon(this.save.loadout[0]),this.save.loadout[1]?selectWeapon(this.save.loadout[1]):null]
-  this.carriedWeapons.clear()
-  for(const weapon of this.loadout)if(weapon)this.carriedWeapons.add(weapon)
   this.maxHP=100+this.level('Vitality')*15;this.hp=this.maxHP
   this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
   this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.earnedBossMaterials=emptyBossMaterials();this.normalCompleted=false;this.firstNormalVictory=false;this.statsBonus=0;this.dodgeDraughts=0
@@ -203,7 +198,7 @@ class Game implements CombatBridge {
  }
  beginFloor(floor:number){
   const rooms=floor===3?generateAbyss(this.rooms.length||20):generate()
-  this.floor=floor;this.rooms=rooms;this.stock.clear()
+  this.floor=floor;this.rooms=rooms
   this.enter(0,0,0);this.resume()
   this.notice(floors[floor].name)
  }
@@ -243,15 +238,12 @@ class Game implements CombatBridge {
    if(this.floor===3)this.save.abyssVictories++
    this.persist()
    const finish=()=>this.floor===3?this.finish(true):this.floor===2?this.openAbyss():this.beginFloor(this.floor+1)
-   const loot=shuffled(relics.filter(r=>r.name!==this.active?.name))
    const first=this.randomRelic(true)
-   const other=loot.find(r=>r.rank<=this.floor+1&&r!==first)??loot[0]
-   const weapon=sample(this.dungeonWeapons())
+   const loot=shuffled(relics.filter(r=>r!==first&&r.name!==this.active?.name))
+   const choices=[first,...loot.filter(r=>r.rank<=this.floor+1),...loot.filter(r=>r.rank>this.floor+1)].slice(0,3)
    this.mandatory=true
-   this.dialog('Main boss defeated',this.scene.bossName,`+1 ${material}. Choose one reward. ${discovery}`,[
-    this.relicChoice(first,finish),this.relicChoice(other,finish),
-    {title:weapon.name,detail:this.weaponStats(weapon),action:()=>this.compare(weapon,finish)},
-   ])
+   this.dialog('Main boss defeated',this.scene.bossName,`+1 ${material}. Choose one relic. ${discovery}`,
+    choices.map(relic=>this.relicChoice(relic,finish)))
   }
  }
  openAbyss(){
@@ -272,25 +264,6 @@ class Game implements CombatBridge {
   return {title:relic.name,detail:rarity[relic.rank]+' · '+relic.detail,action:()=>this.addRelic(relic,done)}
  }
  weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}${w.name===abyssalWeapon?' · Every fourth swing releases a piercing void crescent':''}`}
- compare(w:Weapon,done:Handler,purchase?:(apply:Handler)=>void){
-  if(!this.canEquipWeapon(w)){done();return}
-  const current=this.loadout[w.slot]
-  const take=(equip:boolean)=>{
-   const add=()=>{
-    this.carriedWeapons.add(w)
-    if(equip)this.loadout[w.slot]=w
-    else this.notice(w.name+' added to weapon inventory · I')
-    done()
-   }
-   if(purchase)purchase(add)
-   else add()
-  }
-  this.dialog(w.slot?'Projectile slot':'Melee slot',w.name,`Found: ${this.weaponStats(w)} · Equipped: ${current?current.name+', '+this.weaponStats(current):'Empty'}`,[
-   {title:purchase?'Buy and equip':'Equip',action:()=>take(true)},
-   ...(purchase?[{title:'Buy to inventory',action:()=>take(false)}]:[]),
-   {title:'Leave it',action:done},
-  ])
- }
  interact(){
   const {room}=this
   if(Phaser.Math.Distance.Between(this.scene.player.x,this.scene.player.y,W/2,H/2)>42)return
@@ -306,11 +279,8 @@ class Game implements CombatBridge {
      const discovery=this.blueprint(.43)
      const relic=this.randomRelic()
      this.mandatory=true
-     this.dialog('Chest opened',relic.name,discovery||'Claim the relic and choose whether to inspect the weapon.',[
-      this.relicChoice(relic,()=>{
-       if(Math.random()<.65)this.compare(sample(this.dungeonWeapons()),()=>this.resume())
-       else this.resume()
-      }),
+     this.dialog('Chest opened',relic.name,discovery||'Claim your relic.',[
+      this.relicChoice(relic,()=>this.resume()),
      ])
     }},{title:'Leave',action:()=>this.resume()},
    ])
@@ -347,34 +317,26 @@ class Game implements CombatBridge {
   }
  }
  shop(){
-  const id=this.room.id
-  if(!this.stock.has(id)){
-   const price=(n:number)=>Math.round(n*(1-this.level('Haggling')*.1))
-   const offer=(title:string,cost:number,apply:Handler):Choice=>({
-    title,detail:price(cost)+' gold',cost:price(cost),action:()=>{buy(apply,price(cost));this.shop()},
-   })
-   const buy=(apply:Handler,cost:number)=>{
+  const offer=(title:string,baseCost:number,apply:Handler):Choice=>{
+   const cost=Math.round(baseCost*(1-this.level('Haggling')*.1))
+   return {title,detail:cost+' gold',disabled:this.save.gold<cost,action:()=>{
     if(this.save.gold<cost)return
-    this.save.gold-=cost;this.persist();apply()
-   }
-   const gear=(slot:number):Choice=>{
-    const w=sample(this.dungeonWeapons().filter(weapon=>weapon.slot===slot))
-    const choice:Choice={title:w.name,cost:price(34+this.floor*8),detail:price(34+this.floor*8)+' gold · '+this.weaponStats(w),action:()=>{
-     const cost=price(34+this.floor*8)
-     if(choice.disabled||this.save.gold<cost){this.notice('Insufficient gold');return}
-     this.compare(w,()=>this.shop(),apply=>buy(()=>{choice.disabled=true;apply()},cost))
-    }}
-    return choice
-   }
-   this.stock.set(id,[gear(0),...(this.loadout[1]?[gear(1)]:[]),offer('Large potion',17,()=>this.heal(35)),offer('Field tonic',22,()=>{this.statsBonus+=.08}),offer('Dodge draught',12,()=>{this.dodgeDraughts++})])
+    this.save.gold-=cost
+    this.persist()
+    apply()
+    this.shop()
+   }}
   }
   this.dialog('Merchant','Dungeon provisions',this.save.gold+' gold. Dodge draughts skip the next dodge cooldown.',[
-   ...this.stock.get(id)!.map(choice=>({...choice,disabled:choice.disabled||this.save.gold<(choice.cost??0)})),{title:'Leave shop',action:()=>this.resume()},
+   offer('Large potion',17,()=>this.heal(35)),
+   offer('Field tonic',22,()=>{this.statsBonus+=.08}),
+   offer('Dodge draught',12,()=>{this.dodgeDraughts++}),
+   {title:'Leave shop',action:()=>this.resume()},
   ])
  }
  finish(won:boolean){
   const abyssWon=won&&this.floor===3
-  this.mandatory=false;this.resetRelics();this.carriedWeapons.clear();this.castle()
+  this.mandatory=false;this.resetRelics();this.castle()
   const minutes=Math.floor((performance.now()-this.started)/60000)
   const materials=recipeCost({...this.earnedBossMaterials,scrap:this.earnedMaterials})
   const title=abyssWon?'The Abyssal Overlord is slain':won?'The Fallen King is slain':'Return to the keep'
@@ -446,39 +408,74 @@ class Game implements CombatBridge {
    default: this.improve(station.name,station.person,station.line)
   }
  }
- chooseLoadout(){
-  const form=document.createElement('div')
-  for(const slot of [0,1] as const){
-   if(slot===1&&!this.level(rangedTraining)){
-    const locked=document.createElement('p')
-    locked.textContent='Projectile slot locked · Requires '+rangedTraining
-    form.append(locked);continue
-   }
-   const label=document.createElement('label');label.textContent=slot?'Projectile':'Melee'
-   const select=document.createElement('select')
-   for(const w of weapons.filter(w=>w.slot===slot&&this.save.unlocked.includes(w.name))){
-    const option=new Option(w.name,w.name);option.selected=this.save.loadout[slot]===w.name;select.add(option)
-   }
-   select.onchange=()=>{this.save.loadout[slot]=select.value;this.persist();details.textContent=this.weaponStats(selectWeapon(select.value))}
-   label.append(select);form.append(label)
-   const details=document.createElement('p');details.textContent=this.weaponStats(selectWeapon(select.value));form.append(details)
-  }
-  this.dialog('Castle armory','Starting equipment','Select one weapon for each slot.',[{title:'Back to castle',action:()=>this.castle()}],form)
+ atBlacksmith(){
+  return this.scene.mode==='castle'&&this.scene.castleStation()?.name==='Blacksmith'
+ }
+ recipeStatus(w:Weapon){
+  const recipe=recipes[w.name]
+  if(!this.save.blueprints.includes(w.name))return 'Not discovered'
+  if(w.parent&&!this.save.unlocked.includes(w.parent))return 'Requires '+w.parent
+  if(w.requiresForge&&!this.level('Forge'))return 'Requires Forge'
+  if(!this.canEquipWeapon(w))return 'Requires '+rangedTraining
+  if(!hasRecipeMaterials(this.save,recipe))return 'Missing materials'
+  if(this.save.gold<(recipe.gold??0))return 'Missing gold'
+  return 'Ready to craft'
  }
  craft(){
-  this.dialog('Permanent crafting','Blacksmith',`Mara · Bring a blueprint and metal, and I’ll forge you something worth carrying. ${this.save.materials} Forge Scrap · ${bossMaterials.map(material=>material+' '+this.save.bossMaterials[material]).join(' · ')}.`,[
-   ...weapons.filter(w=>w.parent).map(w=>{
-    const crafted=this.save.unlocked.includes(w.name), blueprint=this.save.blueprints.includes(w.name), parent=this.save.unlocked.includes(w.parent!)
-    const advanced=w.cost!>=4&&!this.level('Forge')
-    const recipe=recipes[w.name]
-    return {title:w.name,detail:crafted?'Crafted':`${recipeCost(recipe)} · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}${this.canEquipWeapon(w)?'':' · Requires '+rangedTraining}`,disabled:!this.canEquipWeapon(w)||crafted||!blueprint||!parent||advanced||!canCraft(this.save,recipe),action:()=>{
-     if(!payRecipe(this.save,recipe))return
-     this.save.unlocked.push(w.name);this.persist();this.craft()
-    }}
-   }),{title:'Starting equipment',action:()=>this.chooseLoadout()},
+  if(!this.atBlacksmith())return
+  const scroll=this.menu==='blacksmith'?overlay.querySelector('.panel')?.scrollTop??0:0
+  const workbench=document.createElement('div')
+  const equipped=document.createElement('p')
+  equipped.textContent='Equipped melee: '+this.save.loadout[0]+' · Equipped ranged: '+(this.save.loadout[1]??'Locked · Requires '+rangedTraining)
+  workbench.append(equipped)
+  const list=document.createElement('div')
+  list.className='forge-recipes'
+  for(const weapon of weapons){
+   const card=document.createElement('section')
+   card.className='forge-recipe'
+   const name=document.createElement('h3')
+   name.textContent=weapon.name
+   const owned=this.save.unlocked.includes(weapon.name)
+   const isEquipped=this.save.loadout[weapon.slot]===weapon.name
+   const status=document.createElement('strong')
+   status.textContent=isEquipped?'Equipped':owned?(weapon.parent?'Crafted':'Unlocked'):weapon.parent?this.recipeStatus(weapon):'Requires '+rangedTraining
+   const stats=document.createElement('small')
+   stats.textContent=(weapon.slot?'Ranged':'Melee')+' · '+this.weaponStats(weapon)
+   card.append(name,status,stats)
+   if(weapon.parent){
+    const blueprint=document.createElement('small')
+    blueprint.textContent=this.save.blueprints.includes(weapon.name)?'Blueprint discovered':'Blueprint not discovered'
+    const recipe=document.createElement('small')
+    recipe.textContent=recipeCost(recipes[weapon.name])+' · Requires '+weapon.parent+(weapon.requiresForge?' and Forge':'')
+    card.append(blueprint,recipe)
+   }
+   const button=document.createElement('button')
+   button.type='button'
+   button.textContent=(owned?'Equip ':'Craft ')+weapon.name
+   button.disabled=owned?isEquipped||!this.canEquipWeapon(weapon):!weapon.parent||status.textContent!=='Ready to craft'
+   button.onclick=()=>{
+    if(!this.atBlacksmith()||!this.canEquipWeapon(weapon))return
+    if(owned){
+     if(!this.save.unlocked.includes(weapon.name))return
+     this.save.loadout[weapon.slot]=weapon.name
+    }else{
+     if(this.save.unlocked.includes(weapon.name)||this.recipeStatus(weapon)!=='Ready to craft'||!payRecipe(this.save,recipes[weapon.name]))return
+     this.save.unlocked.push(weapon.name)
+    }
+    this.persist()
+    this.craft()
+   }
+   if(weapon.parent||owned)card.append(button)
+   list.append(card)
+  }
+  workbench.append(list)
+  this.dialog('Permanent crafting','Blacksmith',`Mara · Craft and equip weapons before descending. ${this.save.gold} gold · ${this.save.materials} Forge Scrap · ${bossMaterials.map(material=>material+' '+this.save.bossMaterials[material]).join(' · ')}.`,[
    {title:'Workshop upgrades',action:()=>this.improve('Blacksmith','Mara the blacksmith','Unlock the forge annex for advanced recipes.')},
    {title:'Back to castle',action:()=>this.castle()},
-  ])
+  ],workbench)
+  this.menu='blacksmith'
+  const panel=overlay.querySelector('.panel')
+  if(panel)panel.scrollTop=scroll
  }
  improve(building:Building,person:string,line:string){
   this.dialog(person,building,line+' '+this.save.gold+' gold available.',[
@@ -507,13 +504,13 @@ class Game implements CombatBridge {
   return ()=>this.castle()
  }
  settings(back:Handler){
-  this.dialog('Settings','Controls','Castle: WASD walk, E interact · Dungeon: WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I weapon inventory · R relic inventory · Tab map · Esc pause',[
+  this.dialog('Settings','Controls','Castle: WASD walk, E interact · Dungeon: WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I equipped weapons · R relic inventory · Tab map · Esc pause',[
    {title:this.save.mute?'Enable sound':'Mute sound',action:()=>{this.save.mute=!this.save.mute;this.persist();this.settings(back)}},
    {title:'Back',action:back},
   ])
  }
  pause(){
-  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Weapons',action:()=>this.weaponInventory()},{title:'Relics',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run equipment and relics will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
+  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Weapons',action:()=>this.weaponInventory()},{title:'Relics',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run relics and temporary buffs will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
  }
  resume(){
   this.paused=false;this.mandatory=false;this.menu='run';hud.hidden=false
@@ -521,21 +518,17 @@ class Game implements CombatBridge {
   this.refresh()
  }
  weaponInventory(){
-  this.dialog('Run inventory','Carried weapons','Choose a weapon to equip it. The previous weapon stays in your inventory for this run.',[
-   ...[...this.carriedWeapons].map(w=>({
-    title:w.name,
-    detail:(w.slot?'Projectile':'Melee')+' · '+(this.loadout[w.slot]===w?'Equipped · ':'')+this.weaponStats(w),
-    disabled:this.loadout[w.slot]===w||!this.canEquipWeapon(w),
-    action:()=>{
-     this.loadout[w.slot]=w
-     this.slot=w.slot
-     this.refresh()
-     this.weaponInventory()
-    },
-   })),
+  const equipped=document.createElement('div')
+  for(const slot of [0,1] as const){
+   const weapon=this.loadout[slot]
+   const item=document.createElement('p')
+   item.textContent=(slot?'Ranged · ':'Melee · ')+(weapon?weapon.name+' · '+this.weaponStats(weapon):'Locked · Requires '+rangedTraining)
+   equipped.append(item)
+  }
+  this.dialog('Run equipment','Equipped weapons','Your loadout is locked for this run. Switch between your equipped weapons with Q or the mouse wheel.',[
    {title:'Relics',action:()=>this.inventory()},
    {title:'Return to dungeon',action:()=>this.resume()},
-  ])
+  ],equipped)
   this.menu='weapons'
  }
  inventory(selected?:Relic){

@@ -26,7 +26,7 @@ type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:n
 type Hazard = Point & {r:number;life:number;damage:number;color:number}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
- slot:0|1; loadout:[Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
+ slot:0|1; loadout:readonly [Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
  readonly active?:Relic; charge:number; readonly power:number; challenge:Set<string>;
  level(name:string):number; relicLevel(name:string):number; switchWeapon():void; curse(name:string):boolean; blessed(name:string):boolean;
  consumeDodgeDraught():boolean; attackPower(damage:number):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
