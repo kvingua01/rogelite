@@ -25,6 +25,7 @@ class Game implements CombatBridge {
  save:Save
  scene=new Combat()
  loadout:[Weapon,Weapon|null]=[weapons[0],null]
+ carriedWeapons=new Set<Weapon>()
  rooms:Room[]=[]
  room!:Room
  floor=0
@@ -70,9 +71,13 @@ class Game implements CombatBridge {
    if(!this.paused&&event.code==='Space')this.scene.rollQueued=true
    if(!this.paused&&event.code==='KeyE')this.scene.relicQueued=true
    if(!this.paused&&event.code==='KeyQ')this.switchWeapon()
-   if(event.code==='KeyR'||event.code==='KeyI'){
+   if(event.code==='KeyR'){
     if(this.menu==='relics')this.resume()
-    else if(!this.paused)this.inventory()
+    else if(!this.paused||this.menu==='weapons')this.inventory()
+   }
+   if(event.code==='KeyI'){
+    if(this.menu==='weapons')this.resume()
+    else if(!this.paused||this.menu==='relics')this.weaponInventory()
    }
    if(!this.paused&&event.code==='KeyF') this.interact()
   })
@@ -174,6 +179,8 @@ class Game implements CombatBridge {
  }
  newRun(){
   this.loadout=[selectWeapon(this.save.loadout[0]),this.save.loadout[1]?selectWeapon(this.save.loadout[1]):null]
+  this.carriedWeapons.clear()
+  for(const weapon of this.loadout)if(weapon)this.carriedWeapons.add(weapon)
   this.maxHP=100+this.level('Vitality')*15;this.hp=this.maxHP
   this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
   this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.statsBonus=0;this.dodgeDraughts=0
@@ -229,11 +236,23 @@ class Game implements CombatBridge {
   return {title:relic.name,detail:rarity[relic.rank]+' · '+relic.detail,action:()=>this.addRelic(relic,done)}
  }
  weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}`}
- compare(w:Weapon,done:Handler,purchase?:Handler){
+ compare(w:Weapon,done:Handler,purchase?:(apply:Handler)=>void){
   if(!this.canEquipWeapon(w)){done();return}
   const current=this.loadout[w.slot]
+  const take=(equip:boolean)=>{
+   const add=()=>{
+    this.carriedWeapons.add(w)
+    if(equip)this.loadout[w.slot]=w
+    else this.notice(w.name+' added to weapon inventory · I')
+    done()
+   }
+   if(purchase)purchase(add)
+   else add()
+  }
   this.dialog(w.slot?'Projectile slot':'Melee slot',w.name,`Found: ${this.weaponStats(w)} · Equipped: ${current?current.name+', '+this.weaponStats(current):'Empty'}`,[
-   {title:purchase?'Buy and equip':'Equip',action:()=>{purchase?.();this.loadout[w.slot]=w;done()}},{title:'Leave it',action:done},
+   {title:purchase?'Buy and equip':'Equip',action:()=>take(true)},
+   ...(purchase?[{title:'Buy to inventory',action:()=>take(false)}]:[]),
+   {title:'Leave it',action:done},
   ])
  }
  interact(){
@@ -298,7 +317,7 @@ class Game implements CombatBridge {
     const choice:Choice={title:w.name,cost:price(34+this.floor*8),detail:price(34+this.floor*8)+' gold · '+this.weaponStats(w),action:()=>{
      const cost=price(34+this.floor*8)
      if(choice.disabled||this.save.gold<cost){this.notice('Insufficient gold');return}
-     this.compare(w,()=>this.shop(),()=>buy(()=>{choice.disabled=true},cost))
+     this.compare(w,()=>this.shop(),apply=>buy(()=>{choice.disabled=true;apply()},cost))
     }}
     return choice
    }
@@ -310,7 +329,7 @@ class Game implements CombatBridge {
  }
  finish(won:boolean){
   if(won){this.save.victories++;this.persist()}
-  this.mandatory=false;this.resetRelics();this.halt()
+  this.mandatory=false;this.resetRelics();this.carriedWeapons.clear();this.halt()
   const minutes=Math.floor((performance.now()-this.started)/60000)
   this.dialog(won?'Victory':'Fallen in battle',won?'The Fallen King is slain':'Return to the keep',`${floors[this.floor].name} · ${minutes} min · ${this.earnedGold} gold earned · ${this.earnedMaterials} forge material. ${won&&this.save.victories===1?'Challenges unlocked.':''}`,[{title:'Return to castle',action:()=>this.castle()}])
   this.menu='summary'
@@ -419,18 +438,36 @@ class Game implements CombatBridge {
   return ()=>this.castle()
  }
  settings(back:Handler){
-  this.dialog('Settings','Controls','WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · R relic inventory · Tab map · Esc pause',[
+  this.dialog('Settings','Controls','WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I weapon inventory · R relic inventory · Tab map · Esc pause',[
    {title:this.save.mute?'Enable sound':'Mute sound',action:()=>{this.save.mute=!this.save.mute;this.persist();this.settings(back)}},
    {title:'Back',action:back},
   ])
  }
  pause(){
-  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Relics',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run equipment and relics will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
+  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Weapons',action:()=>this.weaponInventory()},{title:'Relics',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run equipment and relics will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
  }
  resume(){
   this.paused=false;this.mandatory=false;this.menu='run';hud.hidden=false
   overlay.replaceChildren()
   this.refresh()
+ }
+ weaponInventory(){
+  this.dialog('Run inventory','Carried weapons','Choose a weapon to equip it. The previous weapon stays in your inventory for this run.',[
+   ...[...this.carriedWeapons].map(w=>({
+    title:w.name,
+    detail:(w.slot?'Projectile':'Melee')+' · '+(this.loadout[w.slot]===w?'Equipped · ':'')+this.weaponStats(w),
+    disabled:this.loadout[w.slot]===w||!this.canEquipWeapon(w),
+    action:()=>{
+     this.loadout[w.slot]=w
+     this.slot=w.slot
+     this.refresh()
+     this.weaponInventory()
+    },
+   })),
+   {title:'Relics',action:()=>this.inventory()},
+   {title:'Return to dungeon',action:()=>this.resume()},
+  ])
+  this.menu='weapons'
  }
  inventory(selected?:Relic){
   const slots=document.createElement('div')
@@ -467,7 +504,7 @@ class Game implements CombatBridge {
    slots.append(preview)
   }
   const owned=relics.filter(r=>this.levels.has(r.name))
-  this.dialog('Run inventory','Relic equipment',owned.length?'Choose a relic to equip it. Select an equipped slot to unequip it.':'Collect relics in treasure rooms and from boss rewards.',[
+  this.dialog('Run inventory','Relic equipment',owned.length?'Choose a relic to equip it. Select an equipped slot to unequip it.':'No relics collected this run. After the first fight, try the north or south door for the treasure room. Stand near the chest and press F to open it, then claim the guaranteed relic. Minibosses and main bosses also offer relics.',[
    ...owned.map(r=>{
     const level=this.levels.get(r.name)!
     const equipped=this.relicLevel(r.name)>0
@@ -506,14 +543,18 @@ class Game implements CombatBridge {
   if(!this.room||hud.hidden)return
   const boss=this.scene.foes.find(f=>f.large&&f.hp>0)
   const area=floors[this.floor]
-  const hint=this.room.used?'':['Shop','Treasure','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
+  const treasure=this.room.neighbors.map(id=>this.rooms[id]).find(room=>room.kind==='Treasure'&&!room.used)
+  const hint=this.room.kind==='Treasure'&&!this.room.used?'F · Open chest for a guaranteed relic'
+   : !this.levels.size&&this.room.kind==='Entry'?'Find your first relic in the treasure room after the first fight'
+   : !this.levels.size&&treasure&&!this.scene.locked?'Treasure chest '+(treasure.y<this.room.y?'north':'south')+' · Guaranteed relic'
+   : !this.room.used&&['Shop','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
   const toast=performance.now()<this.toastTimer?this.toast:''
   hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
    ${boss?`<div class="boss">${this.scene.bossName}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
    <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Requires '+rangedTraining}">${i===0?'⚔':'➶'} ${w?.name??'Locked · '+rangedTraining}</span>`).join('')}</div>
-   <div class="relic-hud"><div class="relic-hint">R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
+   <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
  }
 }
 export const game=new Game()

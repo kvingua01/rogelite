@@ -22,13 +22,16 @@ Open the URL Vite prints in a desktop browser.
 | Space | Dodge |
 | E | Activate the equipped relic |
 | F | Interact near a room's chest, altar, merchant, or other fixture |
+| I | Open or close the carried-weapons inventory |
 | R | Open or close relic equipment |
 | Tab | Expand the dungeon map |
 | Escape | Pause or return to combat |
 
 New saves start with the Rusty Sword. Buy Ranged Weapon Training at the castle for 125 gold to unlock the Wooden Bow and projectile slot. Existing ranged unlocks carry forward.
 
-Relics can be collected freely during a run. Equip up to three through the relic inventory, including at most one active relic. One equipped relic runs at 100% power, two at 80% each, and three at 60% each.
+Buy weapons into your run inventory or equip them immediately. Your previous weapons stay available under I.
+
+You start each run without relics. A treasure room branches off the first combat room on every floor. Stand by the chest and press F, then claim its guaranteed relic. Equip up to three through the relic inventory, including at most one active relic. One equipped relic runs at 100% power, two at 80% each, and three at 60% each.
 
 Permanent progress is stored in localStorage for the current browser and origin. Refreshing during a run returns to the main menu with any permanent progress earned so far.
 
