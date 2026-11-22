@@ -1,0 +1,32 @@
+{
+  "name": "cursed-knight",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test:browser": "node tests/browser.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kvingua01/rogelite.git"
+  },
+  "keywords": [],
+  "author": "",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/kvingua01/rogelite/issues"
+  },
+  "homepage": "https://github.com/kvingua01/rogelite#readme",
+  "private": true,
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.6"
+  }
+}
