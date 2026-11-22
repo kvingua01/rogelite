@@ -88,3 +88,34 @@ test('procedural floor gold estimates stay inside the economy targets',()=>{
  assert.ok(upgrades.every(upgrade=>upgrade.cost>=100))
  assert.ok(upgradeCost(110,3)-upgradeCost(110,2)>upgradeCost(110,2)-upgradeCost(110,1))
 })
+
+test('minibosses each have three differentiated phases and an encounter-specific mechanic',async()=>{
+ const {minibosses,phaseFor}=await import('../src/miniboss.ts')
+ const profiles=minibosses.flat()
+ assert.equal(profiles.length,12)
+ assert.equal(new Set(profiles.map(p=>p.special)).size,12)
+ assert.equal(new Set(profiles.map(p=>JSON.stringify(p.phases))).size,12)
+ for(const profile of profiles){
+  const [opening,middle,final]=profile.phases
+  assert.ok(new Set(profile.phases.flat()).size>=4,profile.name)
+  assert.ok(middle.some(attack=>!opening.includes(attack)),profile.name)
+  assert.ok(final.some(attack=>![...opening,...middle].includes(attack)),profile.name)
+ }
+ assert.deepEqual([100,70,69,35,34].map(hp=>phaseFor(hp,100)),[0,0,1,1,2])
+})
+
+test('miniboss hit counts, shop burst, and sustained weapon damage stay in range',async()=>{
+ const {weapons}=await import('../src/data.ts')
+ const sword=weapons.find(w=>w.name==='Rusty Sword')
+ for(const hp of encounters.minibossHealth){
+  const hits=(weapon)=>Math.ceil(hp/weapon.damage)
+  assert.ok(hits(sword)>=25&&hits(sword)<=40)
+  for(const weapon of weapons.filter(w=>w.parent)){
+   const strong=weapon.name==='Cinder Hammer'
+   assert.ok(hits(weapon)>=(strong?10:15)&&hits(weapon)<=(strong?17:25),weapon.name)
+   assert.ok(weapon.damage/weapon.delay*1000<=80,weapon.name)
+   // Even three critical vollies with the spread pellet cap stay below full health.
+   assert.ok(weapon.damage*1.6*(weapon.slot?1.24:1)*3<hp,weapon.name)
+  }
+ }
+})

@@ -250,6 +250,125 @@ try {
  assert.ok(Math.abs(await read(g=>g.hp)-67.4)<.01)
  await read(g=>{g.gold(600);g.save.blueprints.push('Grave Axe');g.persist()})
 
+ const miniReport=await read(async g=>{
+  const {minibosses}=await import('/src/miniboss.ts')
+  const {weapons}=await import('/src/data.ts')
+  const scene=g.scene
+  const report=[]
+  const original=Math.random
+  Math.random=()=>.99
+  try{
+   g.resetRelics();g.blessings.clear()
+   const start=(floor,patch)=>{
+    g.beginFloor(floor)
+    g.enter(g.rooms.find(r=>r.kind==='Miniboss'&&r.patch===patch).id,0,0)
+    scene.player.setPosition(220,144)
+    scene.invulnerable=Infinity
+    return scene.foes[0]
+   }
+   for(const [floor,profiles] of minibosses.entries()){
+    for(const [patch,profile] of profiles.entries()){
+     let foe=start(floor,patch)
+     const attacks=new Set()
+     const stages=[]
+     for(const [phase,ratio] of [1,.69,.34].entries()){
+      foe.hp=foe.max*ratio
+      scene.enemy(foe,.016)
+      const special=phase===0||scene.pending.some(action=>action.owner===foe)
+      if(phase>0){
+       const transition=scene.pending.find(action=>action.owner===foe)
+       scene.pending=[]
+       scene.elapsed=transition.time
+       transition.execute()
+      }
+      stages.push({current:foe.phase,special})
+      for(const attack of profile.phases[phase]){
+       foe.warn=0;foe.next=scene.elapsed;foe.miniAttack=undefined
+       foe.x=268;foe.y=144
+       foe.attacks=profile.phases[phase].indexOf(attack)
+       scene.enemy(foe,.016)
+       if(foe.miniAttack!==attack||!foe.warn)continue
+       scene.elapsed=foe.warn
+       scene.enemy(foe,.016)
+       if(!foe.warn&&foe.strike>scene.elapsed)attacks.add(attack)
+      }
+     }
+     foe=start(floor,patch)
+     g.slot=0;g.loadout[0]=weapons[0]
+     foe.x=270;foe.y=144;foe.resistUntil=Infinity
+     scene.player.setPosition(232,144)
+     let hits=0
+     while(foe.hp>0&&hits<45){scene.attack(0);hits++;scene.elapsed+=350}
+     report.push({name:profile.name,stages,attacks:attacks.size,hits})
+    }
+   }
+   const weaponsTest=[]
+   for(const weapon of weapons){
+    const target=start(0,0)
+    target.x=271;target.y=144;target.resistUntil=Infinity
+    scene.player.setPosition(240,144)
+    g.slot=weapon.slot;g.loadout[weapon.slot]=weapon
+    scene.attack(0)
+    for(const shot of scene.shots)scene.collision(shot,138,.138)
+    weaponsTest.push({name:weapon.name,damage:target.max-target.hp,expected:weapon.damage})
+   }
+   const target=start(0,0)
+   const {relics}=await import('/src/data.ts')
+   const forks=relics.find(r=>r.name==='Forked Bolt')
+   for(let i=0;i<3;i++)g.addRelic(forks,()=>{})
+   g.save.upgrades.Marksmanship=2
+   g.slot=1;g.loadout[1]=weapons.find(w=>w.name==='Storm Staff')
+   target.x=267;target.y=144;target.resistUntil=Infinity
+   scene.player.setPosition(245,144)
+   Math.random=()=>0
+   scene.attack(0)
+   for(const shot of scene.shots)scene.collision(shot,98,.098)
+   const maxVolley=g.loadout[1].damage*1.24*1.6*1.24
+   const actualVolley=target.max-target.hp
+   delete g.save.upgrades.Marksmanship
+   g.resetRelics()
+   const walker=start(0,0)
+   walker.next=Infinity
+   const pillar=scene.pillars[0]
+   walker.x=pillar.x-32;walker.y=pillar.y
+   scene.player.setPosition(pillar.x+100,pillar.y)
+   for(let frame=0;frame<180;frame++){scene.elapsed+=16;scene.enemy(walker,.016)}
+   const clearedPillar=walker.x>pillar.x+25&&scene.arenaOpen(walker,walker.radius)
+   scene.shots=[];scene.flashes=[]
+   scene.hazards=[{x:300,y:120,r:25,damage:20,color:0xff3333,warn:scene.elapsed+450,life:scene.elapsed+650}]
+   const fill=scene.fx.fillCircle
+   let circles=0
+   scene.fx.fillCircle=function(...args){circles++;return fill.apply(this,args)}
+   scene.renderFX(0)
+   const before=circles
+   scene.elapsed+=450
+   scene.renderFX(0)
+   const after=circles
+   scene.fx.fillCircle=fill
+   return {report,weaponsTest,actualVolley,maxVolley,before,after,clearedPillar}
+  }finally{Math.random=original}
+ })
+ for(const profile of miniReport.report){
+  assert.deepEqual(profile.stages,[{current:0,special:true},{current:1,special:true},{current:2,special:true}],profile.name)
+  assert.ok(profile.attacks>=4,profile.name)
+  assert.ok(profile.hits>=25&&profile.hits<=40,JSON.stringify(profile))
+ }
+ for(const weapon of miniReport.weaponsTest)assert.ok(Math.abs(weapon.damage-weapon.expected)<.01,JSON.stringify(weapon))
+ assert.ok(Math.abs(miniReport.actualVolley-miniReport.maxVolley)<.01,JSON.stringify(miniReport))
+ assert.equal(miniReport.before,0)
+ assert.equal(miniReport.after,1)
+ assert.ok(miniReport.clearedPillar)
+ await read(g=>{
+  g.beginFloor(0)
+  g.enter(g.rooms.find(r=>r.kind==='Miniboss').id,0,0)
+  g.loadout[0]=g.carriedWeapons.values().next().value
+  g.slot=0
+ })
+ const miniBalances=await read(g=>[g.save.gold,g.save.materials,g.levels.size])
+ await read(g=>g.scene.damage(g.scene.foes[0],100000))
+ await page.getByText('Miniboss reward',{exact:true}).waitFor()
+ await page.locator('.panel .cards button').first().click()
+ assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+4,miniBalances[1],miniBalances[2]+1])
  for(const name of ['Skeleton King','Blighted Guardian','Fallen King']){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))
   assert.equal(await page.locator('.boss').innerText(),name)

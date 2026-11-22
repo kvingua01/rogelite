@@ -3,6 +3,7 @@ import { arena, cover, H, textures, tones, W } from './art'
 import { type Effect, type Relic, type Weapon } from './data'
 import { floors, type Room } from './dungeon'
 import { encounters, enemyTiming } from './balance'
+import { minibosses, phaseFor, windups, type Attack, type Profile } from './miniboss'
 import { canWalk, castleHeight, castleSolids, castleSpawn, castleWidth, drawCastle, nearbyStation, stations } from './castle'
 import { activeDamage, bellHeal, bellRadius, chaliceHeal, dotDuration, dotRate, duskHeal, frostDuration, mirrorRange, rimeDamage, shadowDamage, wardDuration } from './relic-effects'
 
@@ -17,8 +18,9 @@ const effectColor:Record<Effect,number> = {fire:0xff9167,poison:0x9bda85,frost:0
 const relicElements:Record<Effect,string>={fire:'Cinder Heart',poison:'Bog Idol',frost:'Rime Seal',lightning:'Forked Bolt',shadow:'Dusk Crown'}
 type Effects = Partial<Record<Effect,number>>
 type Point = {x:number;y:number}
-type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>}
-type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;pattern:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number}
+type Volley = {limit:number; spent:Map<Foe,number>; affected:Set<Foe>}
+type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>;volley?:Volley}
+type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;pattern:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number;mini?:Profile;miniAttack?:Attack;miniAim?:Point;resistUntil:number;guardUntil:number;pursuit:number}
 type Hazard = Point & {r:number;warn:number;life:number;damage:number;color:number}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
@@ -41,6 +43,8 @@ export class Combat extends Phaser.Scene {
  foes:Foe[]=[]
  shots:Shot[]=[]
  hazards:Hazard[]=[]
+ pillars:(Point & {r:number})[]=[]
+ pending:{owner:Foe; time:number; execute:()=>void}[]=[]
  flashes:Flash[]=[]
  drops:(Point & {amount:number})[]=[]
  elapsed=0
@@ -115,7 +119,7 @@ export class Combat extends Phaser.Scene {
  }
  reset() {
   this.foes.forEach(foe=>foe.sprite.destroy())
-  this.foes=[]; this.shots=[]; this.hazards=[]; this.flashes=[]; this.drops=[]
+  this.foes=[]; this.shots=[]; this.hazards=[]; this.flashes=[]; this.drops=[]; this.pillars=[]; this.pending=[]
   this.fx.clear()
  }
  showRoom(dx=0,dy=0) {
@@ -130,7 +134,10 @@ export class Combat extends Phaser.Scene {
   const metadata=floors[floor]
   this.bossName=room.kind==='Boss'?metadata.boss:room.kind==='Miniboss'?metadata.minis[room.patch]:''
   if (this.locked) {
-   if(this.bossName) this.spawn(W*.69,H*.49,(floor*2+room.patch)%7,room.kind==='Boss',true)
+   if(this.bossName){
+    if(room.kind==='Miniboss')this.pillars=[{x:137,y:82+room.patch*7,r:12},{x:374,y:212-room.patch*7,r:12}]
+    this.spawn(W*.65,H*.49,(floor*2+room.patch)%7,room.kind==='Boss',true)
+   }
    else {
     const count=encounters.enemies[floor]
     let specials=0
@@ -162,6 +169,17 @@ export class Combat extends Phaser.Scene {
   const {room,floor,rooms}=this.bridge
   const g=this.backdrop.clear()
   arena(g,floors[floor].palettes[room.patch],floor,room.id)
+  if(room.kind==='Miniboss'){
+   const theme=[0xb78a7c,0x91ac79,0xd3946d][floor]
+   g.lineStyle(2,theme,.6).strokeRect(32,30,W-64,H-60)
+   for(const x of [65,447])for(const y of [62,226]){
+    g.fillStyle(theme,.28).fillRect(x-7,y-13,14,24).fillStyle(theme,.72).fillRect(x-5,y-11,10,4)
+   }
+   for(const p of this.pillars){
+    g.fillStyle(0x27232d).fillEllipse(p.x,p.y+6,30,19).fillRect(p.x-11,p.y-12,22,22)
+    g.fillStyle(theme).fillRect(p.x-10,p.y-13,20,6).fillRect(p.x-9,p.y-6,4,13)
+   }
+  }
   for(const id of room.neighbors) {
    const next=rooms[id]
    const dx=next.x-room.x,dy=next.y-room.y
@@ -187,18 +205,25 @@ export class Combat extends Phaser.Scene {
   const sprite=this.add.image(x,y,boss?'boss'+floor:'foe'+kind).setScale(boss?2.65:large?1.8:1).setDepth(3)
   if(effect) sprite.setTint(effectColor[effect])
   if(elite&&!effect) sprite.setTint(0xf2d393)
-  const foe:Foe={x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+450+Math.random()*350,warn:0,angle:0,slow:0,slowPower:0,burn:0,dot:0,phase:0,role,flank:(this.foes.length%2?1:-1),strike:0,attacks:0,pattern:0,echo:null,radius:boss?21:large?15:8,damage:(boss?encounters.bossDamage[floor]:large?encounters.minibossDamage[floor]:encounters.basicDamage[floor]+kind%3)+(elite?encounters.eliteBonusDamage:0)+(effect?2:0)}
+  const foe:Foe={x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+450+Math.random()*350,warn:0,angle:0,slow:0,slowPower:0,burn:0,dot:0,phase:0,role,flank:(this.foes.length%2?1:-1),strike:0,resistUntil:0,guardUntil:0,pursuit:0,mini:large&&!boss?minibosses[floor][this.bridge.room.patch]:undefined,attacks:0,pattern:0,echo:null,radius:boss?21:large?15:8,damage:(boss?encounters.bossDamage[floor]:large?encounters.minibossDamage[floor]:encounters.basicDamage[floor]+kind%3)+(elite?encounters.eliteBonusDamage:0)+(effect?2:0)}
   this.foes.push(foe)
   return foe
  }
  flash(x:number,y:number,r:number,color:number,angle?:number) {
   if(this.flashes.length<90) this.flashes.push({x,y,r,color,angle,life:180,max:180})
  }
- damage(foe:Foe,amount:number,effects:Effects={}) {
+ damage(foe:Foe,amount:number,effects:Effects={},directTargets?:Set<Foe>) {
   if(foe.hp<=0) return
   const b=this.bridge
+  if(foe.guardUntil>this.elapsed)amount*=.72
+  const dealt=Math.min(foe.hp,amount)
   foe.hp-=amount
-  b.gainCharge('damage',amount)
+  b.gainCharge('damage',dealt)
+  if(foe.mini&&amount>=6&&this.elapsed>=foe.resistUntil&&!foe.warn){
+   const angle=Math.atan2(foe.y-this.player.y,foe.x-this.player.x)
+   this.arenaStep(foe,angle,3,foe.radius)
+   foe.resistUntil=this.elapsed+1250
+  }
   if(amount>=1){
    foe.sprite.setAlpha(.55)
    const effect=Object.keys(effects)[0] as Effect|undefined
@@ -221,8 +246,8 @@ export class Combat extends Phaser.Scene {
   }
   const lightning=effects.lightning
   if(lightning) {
-   const target=this.foes.find(other=>other!==foe&&other.hp>0&&Phaser.Math.Distance.Between(other.x,other.y,foe.x,foe.y)<53*lightning)
-   if(target) this.damage(target,amount*.28*lightning)
+   const target=this.foes.find(other=>other!==foe&&other.hp>0&&!directTargets?.has(other)&&Phaser.Math.Distance.Between(other.x,other.y,foe.x,foe.y)<53*lightning)
+   if(target){directTargets?.add(target);this.damage(target,amount*.28*lightning)}
   }
   if(foe.hp>0) return
   foe.sprite.destroy()
@@ -232,9 +257,9 @@ export class Combat extends Phaser.Scene {
   if(b.relicLevel('Dusk Crown')===3) b.heal(duskHeal*b.power)
   if(!foe.large&&Math.random()<encounters.healChance) this.drops.push({x:foe.x,y:foe.y,amount:Math.random()<encounters.largeHealChance?35:15})
  }
- projectile(x:number,y:number,angle:number,speed:number,range:number,damage:number,friendly:boolean,effects:Effects={},pierce=0,bounce=0,home=0) {
+ projectile(x:number,y:number,angle:number,speed:number,range:number,damage:number,friendly:boolean,effects:Effects={},pierce=0,bounce=0,home=0,volley?:Volley) {
   if(this.shots.length>=220) return
-  this.shots.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:range/speed*1000,damage,friendly,effects,pierce,bounce,home,hit:new Set()})
+  this.shots.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:range/speed*1000,damage,friendly,effects,pierce,bounce,home,hit:new Set(),volley})
  }
  attack(angle:number) {
   const b=this.bridge, weapon=b.loadout[b.slot],p=this.player
@@ -251,17 +276,20 @@ export class Combat extends Phaser.Scene {
    const burst=combo('blast')
    const range=weapon.range+(burst?15*(burst.relic?b.power:1):0)
    this.flash(p.x,p.y,range,burst?effectColor.fire:0xf6d5a5,angle)
-   for(const foe of this.foes) {
+   const targets=new Set(this.foes.filter(foe=>{
     const distance=Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)
-    if(distance<range+foe.radius&&(distance<19||Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(foe.y-p.y,foe.x-p.x)-angle))<1.03||burst)) this.damage(foe,amount,elements)
-   }
+    return foe.hp>0&&distance<range+foe.radius&&this.arenaSight(p,foe)&&(distance<19||Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(foe.y-p.y,foe.x-p.x)-angle))<1.03||burst)
+   }))
+   const affected=new Set(targets)
+   for(const foe of targets)this.damage(foe,amount,elements,affected)
   } else {
    const forks=b.relicLevel('Forked Bolt')
    const mirror=b.relicLevel('Mirror Quiver')
    const pierce=Math.round(((forks===3?2:0)+(combo('pierce')?2:0))*b.power)+(b.blessed('Broken Shield')&&elements.shadow?2:0)
-   this.projectile(p.x,p.y,angle,225,weapon.range+mirrorRange(mirror)*b.power,amount,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0)
+   const volley:Volley={limit:amount*(1+.24*b.power),spent:new Map(),affected:new Set()}
+   this.projectile(p.x,p.y,angle,225,weapon.range+mirrorRange(mirror)*b.power,amount,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0,volley)
    const spread=combo('split')?[-.34,-.17,.17,.34]:forks>=2?[-.2,.2]:forks===1?[.17]:[]
-   for(const offset of spread) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirrorRange(mirror)*b.power,amount*.78*b.power,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0)
+   for(const offset of spread) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirrorRange(mirror)*b.power,amount*.78*b.power,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0,volley)
   }
   b.sound(b.slot===0?170:285)
  }
@@ -303,6 +331,8 @@ export class Combat extends Phaser.Scene {
    const speed=113*(1+b.level('Fleet Step')*.07)*(b.curse('Lead Boots')?.75:1)*(b.blessed('Lead Boots')?1.2:1)*delta/Math.hypot(x,y)
    p.x+=x*speed;p.y+=y*speed
   }
+  if(!this.arenaOpen({x:p.x,y:before.y},7))p.x=before.x
+  if(!this.arenaOpen(p,7))p.y=before.y
   if(!this.locked) for(const id of b.room.neighbors) {
    const next=b.rooms[id]
    const dx=next.x-b.room.x,dy=next.y-b.room.y
@@ -317,7 +347,221 @@ export class Combat extends Phaser.Scene {
   if(this.relicQueued)this.activate()
   this.relicQueued=false
  }
+ arenaOpen(point:Point,radius:number){
+  return this.pillars.every(p=>Math.hypot(point.x-p.x,point.y-p.y)>=p.r+radius)
+ }
+ arenaSight(from:Point,to:Point){
+  const distance=Math.hypot(to.x-from.x,to.y-from.y)
+  for(let at=6;at<distance;at+=6){
+   const t=at/distance
+   if(!this.arenaOpen({x:from.x+(to.x-from.x)*t,y:from.y+(to.y-from.y)*t},1))return false
+  }
+  return true
+ }
+ arenaStep(foe:Point,angle:number,distance:number,radius:number){
+  if(distance<=0)return
+  const steps=Math.ceil(distance/5)
+  const dx=Math.cos(angle)*distance/steps,dy=Math.sin(angle)*distance/steps
+  for(let i=0;i<steps;i++){
+   const x=clamp(foe.x+dx,22+radius,W-22-radius),y=clamp(foe.y+dy,24+radius,H-24-radius)
+   if(this.arenaOpen({x,y:foe.y},radius))foe.x=x
+   if(this.arenaOpen({x:foe.x,y},radius))foe.y=y
+  }
+ }
+ queue(owner:Foe,after:number,execute:()=>void){
+  this.pending.push({owner,time:this.elapsed+after,execute})
+ }
+ miniPool(point:Point,foe:Foe,radius:number,life:number){
+  const x=clamp(point.x,36,W-36),y=clamp(point.y,38,H-38)
+  const color=effectColor[foe.mini!.element]
+  this.hazards.push({x,y,r:radius,warn:this.elapsed,life:this.elapsed+life,damage:foe.damage,color})
+  this.flash(x,y,radius,color)
+ }
+ miniFire(foe:Foe,angle:number,count:number,arc:number,offset=0){
+  const speed=113+this.bridge.floor*9+foe.phase*10
+  const effects={[foe.mini!.element]:1}
+  for(let i=0;i<count;i++){
+   const direction=angle+(i-(count-1)/2)*arc+offset
+   this.projectile(foe.x+Math.cos(direction)*17,foe.y+Math.sin(direction)*17,direction,speed,470,foe.damage,false,effects)
+  }
+ }
+ miniSummon(foe:Foe,count:number){
+  const sites=[{x:74,y:67},{x:435,y:220},{x:232,y:217},{x:438,y:63},{x:83,y:220}]
+  const active=this.foes.filter(f=>f.hp>0&&!f.large).length
+  const safe=sites.filter(p=>Math.hypot(p.x-this.player.x,p.y-this.player.y)>105&&this.arenaOpen(p,11)&&
+   this.foes.every(f=>f.hp<=0||Math.hypot(f.x-p.x,f.y-p.y)>45))
+  for(const point of safe.slice(0,Math.max(0,Math.min(count,3-active)))){
+   this.spawn(point.x,point.y,(foe.kind+this.bridge.floor)%7,false,false,false)
+   this.flash(point.x,point.y,16,effectColor[foe.mini!.element])
+  }
+ }
+ miniBlink(foe:Foe,angle:number){
+  const p=this.player
+  const spots=[angle+Math.PI*.6,angle-Math.PI*.6,angle+Math.PI].map(a=>({
+   x:clamp(p.x+Math.cos(a)*98,44,W-44),y:clamp(p.y+Math.sin(a)*98,46,H-46),
+  }))
+  const spot=spots.find(point=>this.arenaOpen(point,foe.radius)&&Math.hypot(point.x-p.x,point.y-p.y)>72)
+  if(!spot)return
+  this.flash(foe.x,foe.y,20,effectColor[foe.mini!.element])
+  Object.assign(foe,spot)
+  this.flash(foe.x,foe.y,20,effectColor[foe.mini!.element])
+ }
+ miniStrike(foe:Foe,angle:number,reach:number,arc:number){
+  const p=this.player,color=effectColor[foe.mini!.element]
+  this.flash(foe.x,foe.y,reach,color,arc<Math.PI?angle:undefined)
+  if(Math.hypot(p.x-foe.x,p.y-foe.y)<reach&&this.arenaSight(foe,p)&&
+     Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(p.y-foe.y,p.x-foe.x)-angle))<=arc)this.hitPlayer(foe.damage)
+ }
+ useMiniAttack(foe:Foe,attack:Attack,aim:Point){
+  const angle=foe.angle
+  const phase=foe.phase
+  switch(attack){
+   case 'lunge':
+    this.arenaStep(foe,angle,Math.min(110+phase*13,Math.max(0,Math.hypot(aim.x-foe.x,aim.y-foe.y)-23)),foe.radius)
+    this.miniStrike(foe,angle,43,1.18)
+    break
+   case 'combo':
+    this.arenaStep(foe,angle,30,foe.radius)
+    this.miniStrike(foe,angle,45,1.22)
+    this.queue(foe,220,()=>{
+     this.arenaStep(foe,angle,25,foe.radius)
+     this.miniStrike(foe,angle,49,1.45)
+    })
+    break
+   case 'spin':
+    this.arenaStep(foe,angle,24,foe.radius)
+    this.miniStrike(foe,angle,55,Math.PI)
+    if(phase>0)this.queue(foe,190,()=>this.miniFire(foe,angle,8,Math.PI/4))
+    break
+   case 'slam':
+    this.arenaStep(foe,angle,38,foe.radius)
+    this.miniStrike(foe,angle,57,Math.PI)
+    if(this.bridge.hp>0)this.miniFire(foe,angle,phase===2?12:9,Math.PI*2/(phase===2?12:9))
+    break
+   case 'spread':
+    this.miniFire(foe,angle,5+phase*2,.23)
+    break
+   case 'burst':
+    for(let i=0;i<3+phase;i++)this.queue(foe,i*110,()=>this.miniFire(foe,angle,phase===2?3:1,.20,(i-1)*.1))
+    break
+   case 'spiral':
+    for(let i=0;i<3+phase;i++)this.queue(foe,i*145,()=>this.miniFire(foe,angle,6,Math.PI/3,i*.2))
+    break
+   case 'summon':
+    this.miniSummon(foe,phase===2?2:1)
+    this.miniFire(foe,angle,5,.27)
+    break
+   case 'blink':
+    this.miniBlink(foe,angle)
+    this.queue(foe,195,()=>this.miniFire(foe,Math.atan2(aim.y-foe.y,aim.x-foe.x),5,.25))
+    break
+   case 'eruption':
+    this.miniPool(aim,foe,25+phase*3,440)
+    for(const side of [-1,1])this.queue(foe,195,()=>this.miniPool({
+     x:aim.x+Math.cos(angle+Math.PI/2)*side*43,y:aim.y+Math.sin(angle+Math.PI/2)*side*43,
+    },foe,21,440))
+    break
+   case 'trail':
+    for(let i=0;i<4+phase;i++)this.queue(foe,i*95,()=>{
+     const point={x:foe.x,y:foe.y}
+     this.arenaStep(foe,angle,18,foe.radius)
+     this.miniPool(point,foe,16,1200+phase*240)
+    })
+    break
+   case 'cross':
+    this.miniFire(foe,angle,4,Math.PI/2)
+    this.queue(foe,180,()=>this.miniFire(foe,angle,8,Math.PI/4,Math.PI/8))
+  }
+ }
+ miniTransition(foe:Foe,profile:Profile,aim:Point){
+  const angle=Math.atan2(aim.y-foe.y,aim.x-foe.x)
+  // Phase changes cancel unfinished combinations. The body animation precedes the new move.
+  this.pending=this.pending.filter(action=>action.owner!==foe)
+  foe.warn=0
+  foe.attacks=0
+  foe.angle=angle
+  foe.next=this.elapsed+930
+  foe.strike=this.elapsed+520
+  foe.sprite.setTint(foe.phase===2?0xffa28a:effectColor[profile.element])
+  this.queue(foe,520,()=>{
+   switch(profile.special){
+    case 'retinue': this.miniSummon(foe,foe.phase);break
+    case 'thorns': this.useMiniAttack(foe,'trail',aim);break
+    case 'rift': this.miniBlink(foe,angle);this.miniFire(foe,angle,8,Math.PI/4);break
+    case 'guard': foe.guardUntil=this.elapsed+650;this.miniFire(foe,angle,4,Math.PI/2);break
+    case 'pools': for(const dx of [-47,47])this.miniPool({x:aim.x+dx,y:aim.y},foe,23,1700);break
+    case 'web': this.miniSummon(foe,1);this.miniFire(foe,angle,7,.31);break
+    case 'spores': this.useMiniAttack(foe,'eruption',aim);break
+    case 'aftershock': this.useMiniAttack(foe,'slam',aim);break
+    case 'embers': this.miniFire(foe,angle,10,Math.PI/5);this.miniPool(foe,foe,33,1250);break
+    case 'salvo': this.useMiniAttack(foe,'burst',aim);break
+    case 'shade': this.miniBlink(foe,angle);this.miniSummon(foe,1);break
+    case 'inferno': this.useMiniAttack(foe,'spiral',aim);break
+   }
+  })
+ }
+ tickMiniboss(foe:Foe,profile:Profile,delta:number){
+  const p=this.player
+  const angle=Math.atan2(p.y-foe.y,p.x-foe.x)
+  const range=Math.hypot(p.x-foe.x,p.y-foe.y)
+  const phase=phaseFor(foe.hp,foe.max)
+  if(phase>foe.phase){
+   foe.phase=phase
+   this.miniTransition(foe,profile,{x:p.x,y:p.y})
+  }
+  if(foe.warn&&this.elapsed>=foe.warn&&foe.miniAttack&&foe.miniAim){
+   const attack=foe.miniAttack
+   foe.warn=0;foe.attacks++
+   foe.strike=this.elapsed+190
+   foe.next=this.elapsed+[840,655,500][phase]+(['spiral','trail','summon'].includes(attack)?220:0)
+   this.useMiniAttack(foe,attack,foe.miniAim)
+   if(this.bridge.paused)return
+  }else if(!foe.warn&&this.elapsed>=foe.next){
+   const attacks=profile.phases[phase]
+   const current=attacks[foe.attacks%attacks.length]
+   const reach:Partial<Record<Attack,number>>={lunge:159,combo:84,spin:85,slam:110,trail:185}
+   const open=range<=(reach[current]??390)
+   const antiCamp=foe.pursuit>1800&&phase>0
+   if(open||antiCamp){
+    const selected=open?current:attacks.find(attack=>range<=(reach[attack]??390))
+    if(selected){
+     foe.warn=this.elapsed+Math.max(280,windups[selected]-phase*35)
+     foe.miniAttack=selected
+     foe.miniAim={x:p.x,y:p.y}
+     foe.angle=angle
+    }
+   }
+  }
+  const moving=Math.hypot(this.velocity.x,this.velocity.y)>18
+  foe.pursuit=moving?0:foe.pursuit+delta*1000
+  if(!foe.warn){
+   const speed=(profile.style==='pursue'?79:71)+phase*11+this.bridge.floor*5
+   const slow=foe.slow>this.elapsed?1-foe.slowPower*.65:1
+   let bearing=angle
+   if(profile.style!=='pursue'&&range<76)bearing=angle+Math.PI
+   else if(range<(profile.style==='pursue'?42:118))bearing=angle+foe.flank*Math.PI/2
+   const x=foe.x,y=foe.y
+   const step=speed*slow*delta*(this.bridge.challenge.has('Swift Foes')?1.27:1)
+   this.arenaStep(foe,bearing,step,foe.radius)
+   if(Math.hypot(foe.x-x,foe.y-y)<step*.25){
+    const offsets=[foe.flank*.85,-foe.flank*.85,foe.flank*1.5,-foe.flank*1.5]
+    for(const offset of offsets){
+     this.arenaStep(foe,angle+offset,step,foe.radius)
+     if(Math.hypot(foe.x-x,foe.y-y)>=step*.5)break
+    }
+   }
+  }
+  const winding=foe.warn>0
+  const striking=foe.strike>this.elapsed
+  const scale=2.08+phase*.12
+  foe.sprite.setPosition(foe.x,foe.y).setFlipX(p.x<foe.x)
+   .setScale(scale*(winding?.88:striking?1.17:1),scale*(winding?1.14:striking||foe.guardUntil>this.elapsed?.88:1))
+   .setAngle((p.x<foe.x?1:-1)*(winding?14:striking?-13:0))
+   .setAlpha(Math.min(1,foe.sprite.alpha+delta*7))
+  if(foe.burn>this.elapsed)this.damage(foe,foe.dot*delta)
+ }
  enemy(foe:Foe,delta:number) {
+  if(foe.mini){this.tickMiniboss(foe,foe.mini,delta);return}
   const p=this.player,b=this.bridge
   const range=Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)
   const angle=Math.atan2(p.y-foe.y,p.x-foe.x)
@@ -329,7 +573,7 @@ export class Combat extends Phaser.Scene {
   }
   if(phase>foe.phase) {
    foe.phase=phase
-   this.flash(foe.x,foe.y,65,0xda94e1)
+   foe.sprite.setTint(0xd892b8)
    this.hazards.push({x:foe.x,y:foe.y,r:48,warn:this.elapsed+620,life:this.elapsed+840,damage:foe.damage,color:0xf0a279})
    if(b.floor===1) for(const [dx,dy] of [[-60,0],[60,0],[0,-51],[0,51]]) this.hazards.push({
     x:clamp(foe.x+dx,26,W-26),y:clamp(foe.y+dy,28,H-28),r:31,warn:this.elapsed+780,life:this.elapsed+1010,damage:foe.damage+5,color:0xc8b46e,
@@ -391,6 +635,7 @@ export class Combat extends Phaser.Scene {
   const retreat=foe.role==='ranged'&&range<82
   if(!foe.warn&&(range>desired||retreat||(foe.role==='ranged'&&range>=82))){
    const speed=(foe.large?52:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7
+   const previous={x:foe.x,y:foe.y}
    const step=speed*(foe.elite?enemyTiming.eliteSpeed:1)*(b.challenge.has('Swift Foes')?1.27:1)*(foe.slow>this.elapsed?1-foe.slowPower:1)*delta
    const strafe=foe.kind%2===0?foe.flank:Math.sin(this.elapsed/450+foe.kind)>0?1:-1
    let approach=retreat?angle+Math.PI:angle+(melee&&range>34?foe.flank*.42:0)
@@ -408,6 +653,8 @@ export class Combat extends Phaser.Scene {
      foe.x+=dx/gap*delta*26;foe.y+=dy/gap*delta*26
     }
    }
+   if(!this.arenaOpen({x:foe.x,y:previous.y},foe.radius))foe.x=previous.x
+   if(!this.arenaOpen(foe,foe.radius))foe.y=previous.y
    foe.x=clamp(foe.x,25,W-25);foe.y=clamp(foe.y,26,H-26)
   }
   const scale=foe.boss?2.65:foe.large?1.8:1
@@ -435,10 +682,21 @@ export class Combat extends Phaser.Scene {
    if(shot.y<19||shot.y>H-19) shot.vy*=-1
    shot.x=clamp(shot.x,19,W-19);shot.y=clamp(shot.y,19,H-19);shot.bounce--
   }
+  if(!this.arenaOpen(shot,2))return false
   if(shot.friendly) {
    for(const foe of this.foes) if(foe.hp>0&&!shot.hit.has(foe)&&Phaser.Math.Distance.Between(foe.x,foe.y,shot.x,shot.y)<foe.radius+2) {
-    shot.hit.add(foe);this.damage(foe,shot.damage,shot.effects)
-    if(shot.effects.fire&&this.bridge.relicLevel('Cinder Heart')===3) for(const target of this.foes) if(target!==foe&&Phaser.Math.Distance.Between(target.x,target.y,foe.x,foe.y)<30*this.bridge.power) this.damage(target,shot.damage*.35*this.bridge.power,{fire:this.bridge.power})
+    shot.hit.add(foe)
+    const spent=shot.volley?.spent.get(foe)??0
+    const damage=shot.volley?Math.min(shot.damage,Math.max(0,shot.volley.limit-spent)):shot.damage
+    shot.volley?.spent.set(foe,spent+damage)
+    const affected=shot.volley?.affected??new Set<Foe>()
+    affected.add(foe)
+    if(damage>0)this.damage(foe,damage,spent?{}:shot.effects,affected)
+    if(!spent&&shot.effects.fire&&this.bridge.relicLevel('Cinder Heart')===3) for(const target of this.foes){
+     if(target.hp<=0||affected.has(target)||Math.hypot(target.x-foe.x,target.y-foe.y)>=30*this.bridge.power)continue
+     affected.add(target)
+     this.damage(target,damage*.35*this.bridge.power,{fire:this.bridge.power})
+    }
     if(shot.pierce--<=0) return false
    }
   } else if(Phaser.Math.Distance.Between(p.x,p.y,shot.x,shot.y)<9) {this.hitPlayer(shot.damage);return false}
@@ -453,7 +711,8 @@ export class Combat extends Phaser.Scene {
  renderFX(dt:number) {
   const g=this.fx.clear()
   for(const h of this.hazards) {
-   g.fillStyle(h.color,this.elapsed<h.warn?.17:.25).fillCircle(h.x,h.y,h.r)
+   if(this.elapsed<h.warn||this.elapsed>=h.life)continue
+   g.fillStyle(h.color,.25).fillCircle(h.x,h.y,h.r)
    g.lineStyle(1,h.color,.7).strokeCircle(h.x,h.y,h.r)
   }
   for(const f of this.foes) if(f.hp>0){
@@ -486,6 +745,9 @@ export class Combat extends Phaser.Scene {
   this.move(delta)
   if(b.paused||this.mode!=='run') return
   b.gainCharge('time',delta)
+  const due=this.pending.filter(action=>action.owner.hp>0&&action.time<=this.elapsed)
+  this.pending=this.pending.filter(action=>action.owner.hp>0&&action.time>this.elapsed)
+  for(const action of due){action.execute();if(b.paused||this.mode!=='run')return}
   for(const foe of [...this.foes]){
    if(foe.hp>0)this.enemy(foe,delta)
    if(b.paused||this.mode!=='run')return
@@ -500,7 +762,7 @@ export class Combat extends Phaser.Scene {
   })
   this.foes=this.foes.filter(f=>f.hp>0)
   if(this.locked&&this.foes.length===0) {
-   this.locked=false;this.shots=[];this.hazards=[];this.drawRoom()
+   this.locked=false;this.shots=[];this.hazards=[];this.pending=[];this.drawRoom()
    b.clear()
   }
   this.renderFX(dt)

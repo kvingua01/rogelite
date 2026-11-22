@@ -22,7 +22,7 @@ export const encounters = {
  basicDamage: [14, 20, 27],
  basicHealth: [49, 69, 92],
  minibossDamage: [20, 27, 36],
- minibossHealth: [230, 350, 485],
+ minibossHealth: [650, 775, 900],
  bossDamage: [24, 33, 42],
  bossHealth: [570, 805, 1050],
  eliteBonusDamage: 9,

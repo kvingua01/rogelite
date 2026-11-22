@@ -587,7 +587,7 @@ class Game implements CombatBridge {
   const toast=performance.now()<this.toastTimer?this.toast:''
   hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
-   ${boss?`<div class="boss">${this.scene.bossName}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
+   ${boss?`<div class="boss ${boss.mini?'miniboss-bar':''}">${this.scene.bossName}${boss.mini?' · Phase '+(boss.phase+1):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
    <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Requires '+rangedTraining}">${i===0?'⚔':'➶'} ${w?.name??'Locked · '+rangedTraining}</span>`).join('')}</div>
    <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
