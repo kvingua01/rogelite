@@ -37,8 +37,3 @@ export const minibosses = [
 ] as const
 
 export const phaseFor = (hp:number,max:number):0|1|2 => hp/max<.35?2:hp/max<.70?1:0
-
-export const windups:Record<Attack,number> = {
- lunge:410,combo:390,spin:455,slam:540,spread:410,burst:360,spiral:490,
- summon:510,blink:415,eruption:500,trail:430,cross:435,
-}

@@ -116,38 +116,63 @@ try {
  assert.equal(await read(g=>g.scene.foes.length),6)
  assert.ok(await read(g=>g.scene.foes.every(f=>f.hp>=42&&f.damage>=14)))
  assert.deepEqual(await read(g=>[g.room.id,g.scene.locked]),[id,true],JSON.stringify(await read(g=>({p:[g.scene.player.x,g.scene.player.y],paused:g.paused,menu:g.menu}))))
- const meleeCheck=await read(g=>{
-  const scene=g.scene
-  const existing=scene.foes.find(foe=>foe.role==='melee')
-  if(!existing)return null
-  const previous=scene.elapsed
-  const player=scene.player
-  scene.player.setPosition(existing.x-80,existing.y)
-  const priorGap=Math.hypot(existing.x-player.x,existing.y-player.y)
-  existing.warn=0
-  existing.next=previous-1
-  scene.enemy(existing,.08)
-  const chased=Math.hypot(existing.x-player.x,existing.y-player.y)<priorGap
-  player.setPosition(existing.x-16,existing.y)
-  scene.enemy(existing,.016)
-  const telegraph=existing.warn>previous&&existing.sprite.angle!==0
-  const priorShots=scene.shots
-  scene.shots=[]
-  const lineBetween=scene.fx.lineBetween
-  let warningLines=0
-  scene.fx.lineBetween=function(...args){warningLines++;return lineBetween.apply(this,args)}
+ const timing=await read(g=>{
+  const scene=g.scene,p=scene.player
+  const melee=scene.foes.find(foe=>foe.role==='melee')
+  const ranged=scene.foes.find(foe=>foe.role==='ranged')
+  if(!melee||!ranged)return null
+  const health=g.hp
+  melee.x=240;melee.y=144;melee.next=scene.elapsed;melee.strike=0
+  p.setPosition(180,144)
+  scene.shots=[];scene.flashes=[];scene.hazards=[]
+  scene.enemy(melee,.05)
+  const chasing=melee.x<240&&melee.sprite.angle===0&&melee.sprite.scaleX===1
+  const methods=['lineBetween','strokeCircle','fillCircle']
+  const originals=methods.map(method=>scene.fx[method])
+  let indicators=0
+  methods.forEach((method,i)=>{scene.fx[method]=function(...args){indicators++;return originals[i].apply(this,args)}})
   scene.renderFX(0)
-  scene.fx.lineBetween=lineBetween
-  scene.shots=priorShots
-  const health=g.hp, shots=scene.shots.length
-  scene.elapsed=existing.warn
+  methods.forEach((method,i)=>{scene.fx[method]=originals[i]})
+  p.setPosition(melee.x-16,melee.y)
   scene.invulnerable=0
-  scene.enemy(existing,.016)
-  const result={chased,telegraph,warningLines,damage:health-g.hp,shots:scene.shots.length-shots}
-  g.hp=health
-  return result
+  const before=melee.attacks
+  scene.enemy(melee,.016)
+  const immediateDamage=health-g.hp
+  const meleeOnCooldown=melee.next>scene.elapsed&&melee.attacks===before+1
+  const afterStrike=melee.x
+  p.setPosition(melee.x-60,melee.y)
+  scene.enemy(melee,.016)
+  const meleeMovedOnCooldown=melee.x<afterStrike&&melee.attacks===before+1
+  ranged.x=320;ranged.y=144;ranged.next=scene.elapsed
+  const shots=scene.shots.length
+  scene.enemy(ranged,.016)
+  const fired=scene.shots.length-shots
+  const location={x:ranged.x,y:ranged.y}
+  scene.enemy(ranged,.016)
+  const rangedCooldown=ranged.next>scene.elapsed&&scene.shots.length===shots+fired
+  const rangedMovedOnCooldown=Math.hypot(ranged.x-location.x,ranged.y-location.y)>0
+  g.hp=health;scene.invulnerable=scene.elapsed+1000
+  return {chasing,indicators,immediateDamage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
+   upright:melee.sprite.angle===0&&ranged.sprite.angle===0}
  })
- assert.ok(meleeCheck?.chased&&meleeCheck.telegraph&&meleeCheck.damage>=14&&meleeCheck.shots===0&&meleeCheck.warningLines===0,JSON.stringify(meleeCheck))
+ assert.ok(timing?.chasing&&timing.indicators===0&&timing.immediateDamage>=14&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
+  timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.upright,JSON.stringify(timing))
+ const eliteTiming=await read(g=>{
+  const scene=g.scene,player=scene.player
+  const elite=scene.spawn(305,145,4)
+  elite.elite=true;elite.role='special';elite.next=scene.elapsed
+  player.setPosition(240,145)
+  const hazards=scene.hazards.length
+  scene.enemy(elite,.016)
+  const immediate=scene.hazards.length===hazards+1&&elite.next>scene.elapsed&&elite.sprite.angle===0
+  scene.enemy(elite,.016)
+  const cooledDown=scene.hazards.length===hazards+1
+  elite.sprite.destroy()
+  scene.foes.pop()
+  scene.hazards.length=hazards
+  return immediate&&cooledDown
+ })
+ assert.ok(eliteTiming)
  await read(g=>{const f=g.scene.foes[0];g.scene.player.setPosition(f.x-38,f.y);g.scene.nextAttack=0})
  const area=await page.locator('canvas').boundingBox()
  const point=await read(g=>({x:g.scene.foes[0].x,y:g.scene.foes[0].y}))
@@ -273,25 +298,23 @@ try {
      const stages=[]
      for(const [phase,ratio] of [1,.69,.34].entries()){
       foe.hp=foe.max*ratio
+      const activity=()=>scene.foes.length+scene.shots.length+scene.hazards.length+scene.flashes.length
+      const before=activity()
       scene.enemy(foe,.016)
-      const special=phase===0||scene.pending.some(action=>action.owner===foe)
-      if(phase>0){
-       const transition=scene.pending.find(action=>action.owner===foe)
-       scene.pending=[]
-       scene.elapsed=transition.time
-       transition.execute()
-      }
+      const special=phase===0||activity()>before
       stages.push({current:foe.phase,special})
+      const use=scene.useMiniAttack
+      let executed
+      scene.useMiniAttack=function(foe,attack,aim){executed=attack;return use.call(this,foe,attack,aim)}
       for(const attack of profile.phases[phase]){
-       foe.warn=0;foe.next=scene.elapsed;foe.miniAttack=undefined
+       foe.next=scene.elapsed
        foe.x=268;foe.y=144
        foe.attacks=profile.phases[phase].indexOf(attack)
+       executed=undefined
        scene.enemy(foe,.016)
-       if(foe.miniAttack!==attack||!foe.warn)continue
-       scene.elapsed=foe.warn
-       scene.enemy(foe,.016)
-       if(!foe.warn&&foe.strike>scene.elapsed)attacks.add(attack)
+       if(executed===attack&&foe.next>scene.elapsed&&foe.strike>scene.elapsed&&foe.sprite.angle===0)attacks.add(attack)
       }
+      scene.useMiniAttack=use
      }
      foe=start(floor,patch)
      g.slot=0;g.loadout[0]=weapons[0]
@@ -335,13 +358,13 @@ try {
    for(let frame=0;frame<180;frame++){scene.elapsed+=16;scene.enemy(walker,.016)}
    const clearedPillar=walker.x>pillar.x+25&&scene.arenaOpen(walker,walker.radius)
    scene.shots=[];scene.flashes=[]
-   scene.hazards=[{x:300,y:120,r:25,damage:20,color:0xff3333,warn:scene.elapsed+450,life:scene.elapsed+650}]
+   scene.hazards=[{x:300,y:120,r:25,damage:20,color:0xff3333,life:scene.elapsed+650}]
    const fill=scene.fx.fillCircle
    let circles=0
    scene.fx.fillCircle=function(...args){circles++;return fill.apply(this,args)}
    scene.renderFX(0)
    const before=circles
-   scene.elapsed+=450
+   scene.elapsed+=650
    scene.renderFX(0)
    const after=circles
    scene.fx.fillCircle=fill
@@ -355,7 +378,7 @@ try {
  }
  for(const weapon of miniReport.weaponsTest)assert.ok(Math.abs(weapon.damage-weapon.expected)<.01,JSON.stringify(weapon))
  assert.ok(Math.abs(miniReport.actualVolley-miniReport.maxVolley)<.01,JSON.stringify(miniReport))
- assert.equal(miniReport.before,0)
+ assert.equal(miniReport.before,1)
  assert.equal(miniReport.after,1)
  assert.ok(miniReport.clearedPillar)
  await read(g=>{
@@ -376,13 +399,14 @@ try {
    const scene=g.scene,foe=scene.foes[0],health=g.hp
    foe.x=100;foe.y=100
    scene.player.setPosition(126,100)
-   foe.angle=0;foe.pattern=0;foe.warn=scene.elapsed
+   foe.next=scene.elapsed
+   const attacks=foe.attacks
    scene.invulnerable=scene.elapsed+205
    scene.enemy(foe,.016)
-   return {health,after:g.hp,damage:foe.damage,max:foe.max}
+   return {health,after:g.hp,damage:foe.damage,max:foe.max,immediate:foe.attacks===attacks+1&&foe.next>scene.elapsed}
   })
   assert.equal(dodge.health,dodge.after)
-  assert.ok(dodge.damage>=24&&dodge.max>=570)
+  assert.ok(dodge.damage>=24&&dodge.max>=570&&dodge.immediate)
   await read(g=>g.scene.damage(g.scene.foes[0],100000))
   await page.getByText('Main boss defeated',{exact:true}).waitFor()
   await page.getByText(new RegExp('^\\+1 '+material)).waitFor()
@@ -465,17 +489,20 @@ try {
   const {abyssEnemies,overlordPhases}=await import('/src/abyss.ts')
   const room=g.rooms.find(r=>r.kind==='Combat')
   const profiles=[]
+  const perform=scene.abyssAttack
+  let executed
+  scene.abyssAttack=function(foe,attack,aim){executed=attack;return perform.call(this,foe,attack,aim)}
   for(const [index,expected] of abyssEnemies.entries()){
    g.enter(room.id,0,0)
    const foe=scene.foes.find(f=>f.kind===index)
    scene.player.setPosition(215,141)
    scene.invulnerable=Infinity
    foe.x=280;foe.y=141;foe.next=scene.elapsed
-   scene.enemy(foe,.016)
-   scene.elapsed=foe.warn
    const x=foe.x,shots=scene.shots.length
+   executed=undefined
    scene.enemy(foe,.016)
-   profiles.push({name:foe.abyss.name,attack:foe.abyssAttack,expected:expected.patterns[0],worked:foe.x!==x||scene.shots.length>shots||scene.pending.length>0||scene.foes.some(f=>f.summoned)})
+   profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:foe.next>scene.elapsed&&foe.sprite.angle===0&&
+    (foe.x!==x||scene.shots.length>shots||scene.pending.length>0||scene.foes.some(f=>f.summoned))})
   }
   g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
   const boss=scene.foes[0],stages=[]
@@ -483,18 +510,17 @@ try {
    scene.player.setPosition(225,145)
    boss.x=276;boss.y=145;boss.hp=boss.max*ratio
    scene.invulnerable=Infinity
+   const activity=()=>scene.hazards.length+scene.shots.length+scene.foes.length+scene.flashes.length
+   const before=activity()
    scene.enemy(boss,.016)
-   const transition=phase>0?scene.pending.find(action=>action.owner===boss):null
-   if(transition){scene.elapsed=transition.time;transition.execute()}
-   boss.x=276;boss.y=145;boss.next=scene.elapsed;boss.warn=0
-   scene.enemy(boss,.016)
+   const transition=phase===0||activity()>before
+   boss.x=276;boss.y=145;boss.attacks=0;boss.next=scene.elapsed
    const expected=overlordPhases[phase].patterns[0]
-   const before=scene.shots.length+scene.hazards.length+scene.pending.length
-   scene.elapsed=boss.warn
+   executed=undefined
    scene.enemy(boss,.016)
-   stages.push({phase:boss.phase,attack:boss.abyssAttack,expected,worked:boss.strike>scene.elapsed&&(!phase||!!transition)&&
-    (scene.shots.length+scene.hazards.length+scene.pending.length>before||phase===0)})
+   stages.push({phase:boss.phase,attack:executed,expected,worked:boss.strike>scene.elapsed&&boss.next>scene.elapsed&&boss.sprite.angle===0&&transition})
   }
+  scene.abyssAttack=perform
   const {weapons}=await import('/src/data.ts')
   const old=g.loadout[0]
   g.loadout[0]=weapons.find(w=>w.name==='Abyssal Greatsword');g.slot=0
