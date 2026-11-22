@@ -4,15 +4,15 @@ export type Effect = 'fire'|'poison'|'frost'|'lightning'|'shadow'
 export type Weapon = {name:string; damage:number; delay:number; range:number; slot:0|1; effect?:Effect; parent?:string; cost?:number}
 export const weapons: Weapon[] = [
  {name:'Rusty Sword',damage:25,delay:350,range:42,slot:0},
- {name:'Wooden Bow',damage:17,delay:420,range:245,slot:1},
+ {name:'Wooden Bow',damage:8.5,delay:420,range:245,slot:1},
  {name:'Grave Axe',damage:45,delay:620,range:47,slot:0,parent:'Rusty Sword',cost:2},
  {name:'Frost Pike',damage:34,delay:420,range:68,slot:0,effect:'frost',parent:'Grave Axe',cost:3},
  {name:'Cinder Hammer',damage:60,delay:730,range:53,slot:0,effect:'fire',parent:'Grave Axe',cost:4},
  {name:'Shade Dagger',damage:20,delay:215,range:36,slot:0,effect:'shadow',parent:'Frost Pike',cost:4},
- {name:'Iron Crossbow',damage:32,delay:590,range:285,slot:1,parent:'Wooden Bow',cost:2},
- {name:'Storm Staff',damage:26,delay:480,range:245,slot:1,effect:'lightning',parent:'Iron Crossbow',cost:3},
- {name:'Venom Wand',damage:18,delay:295,range:211,slot:1,effect:'poison',parent:'Iron Crossbow',cost:3},
- {name:'Night Knives',damage:15,delay:225,range:168,slot:1,effect:'shadow',parent:'Venom Wand',cost:4},
+ {name:'Iron Crossbow',damage:16,delay:590,range:285,slot:1,parent:'Wooden Bow',cost:2},
+ {name:'Storm Staff',damage:13,delay:480,range:245,slot:1,effect:'lightning',parent:'Iron Crossbow',cost:3},
+ {name:'Venom Wand',damage:9,delay:295,range:211,slot:1,effect:'poison',parent:'Iron Crossbow',cost:3},
+ {name:'Night Knives',damage:7.5,delay:225,range:168,slot:1,effect:'shadow',parent:'Venom Wand',cost:4},
 ]
 export const rarity = ['Common','Rare','Epic','Legendary']
 export const colors = ['#9acb86','#84b8e7','#c392ec','#f4c476']
