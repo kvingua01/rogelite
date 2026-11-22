@@ -22,9 +22,13 @@ Open the URL Vite prints in a desktop browser.
 | Space | Dodge |
 | E | Activate the equipped relic |
 | F | Interact near a room's chest, altar, merchant, or other fixture |
-| I | Open inventory |
+| R | Open or close relic equipment |
 | Tab | Expand the dungeon map |
 | Escape | Pause or return to combat |
+
+New saves start with the Rusty Sword. Buy Ranged Weapon Training at the castle for 125 gold to unlock the Wooden Bow and projectile slot. Existing ranged unlocks carry forward.
+
+Relics can be collected freely during a run. Equip up to three through the relic inventory, including at most one active relic. One equipped relic runs at 100% power, two at 80% each, and three at 60% each.
 
 Permanent progress is stored in localStorage for the current browser and origin. Refreshing during a run returns to the main menu with any permanent progress earned so far.
 

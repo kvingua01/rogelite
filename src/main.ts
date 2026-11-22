@@ -1,14 +1,20 @@
 import Phaser from 'phaser'
 import { Combat, type CombatBridge } from './combat'
 import { H, W } from './art'
-import { challenges, colors, contracts, contractClear, decode, rarity, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
+import { challenges, colors, contracts, contractClear, decode, rarity, rangedTraining, unlockRanged, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
 import { floors, generate, sample, type Room } from './dungeon'
+import { relicEffect } from './relic-effects'
+import { economy, relicPower, relicSlotCount } from './balance'
 import './style.css'
 
 const hud=document.querySelector<HTMLElement>('#hud')!
 const overlay=document.querySelector<HTMLElement>('#overlay')!
 const saveKey='cursed-knight-v1'
 const selectWeapon=(name:string)=>weapons.find(w=>w.name===name)!
+const numerals=['','I','II','III']
+const icons=['♨','☘','❄','ϟ','✧','◇','♛','♬','♦','↯','▣']
+const icon=(relic:Relic)=>icons[relics.indexOf(relic)]
+const pct=(n:number)=>Math.round(n*100)+'%'
 const shuffled=<T,>(items:readonly T[])=>[...items].map(item=>({item,sort:Math.random()})).sort((a,b)=>a.sort-b.sort).map(({item})=>item)
 type Handler=()=>void
 type Choice={title:string; detail?:string; disabled?:boolean; cost?:number; action:Handler}
@@ -18,15 +24,14 @@ const bar=(value:number)=><string>`<i style="width:${Math.max(0,Math.min(100,val
 class Game implements CombatBridge {
  save:Save
  scene=new Combat()
- loadout:[Weapon,Weapon]=[weapons[0],weapons[1]]
+ loadout:[Weapon,Weapon|null]=[weapons[0],null]
  rooms:Room[]=[]
  room!:Room
  floor=0
  hp=100
  maxHP=100
  slot:0|1=0
- active?:Relic
- charge=0
+ equipped:(Relic|null)[]=Array<Relic|null>(relicSlotCount).fill(null)
  activeCharges=new Map<string,number>()
  levels=new Map<string,number>()
  blessings=new Set<string>()
@@ -64,14 +69,33 @@ class Game implements CombatBridge {
    if(event.code==='Tab'&&(this.menu==='map'||!this.paused)) this.menu==='map'?this.resume():this.mapMenu()
    if(!this.paused&&event.code==='Space')this.scene.rollQueued=true
    if(!this.paused&&event.code==='KeyE')this.scene.relicQueued=true
-   if(!this.paused&&event.code==='KeyQ'){this.slot=this.slot===0?1:0;this.refresh()}
-   if(!this.paused&&event.code==='KeyI') this.inventory()
+   if(!this.paused&&event.code==='KeyQ')this.switchWeapon()
+   if(event.code==='KeyR'||event.code==='KeyI'){
+    if(this.menu==='relics')this.resume()
+    else if(!this.paused)this.inventory()
+   }
    if(!this.paused&&event.code==='KeyF') this.interact()
   })
  }
  persist(){try {localStorage.setItem(saveKey,JSON.stringify(this.save))} catch {this.notice('Browser storage is unavailable')}}
- level(name:string){return this.levels.get(name)??this.save.upgrades[name]??0}
- has(name:string){return this.level(name)>0}
+ level(name:string){return this.save.upgrades[name]??0}
+ relicLevel(name:string){return this.equipped.some(relic=>relic?.name===name)?this.levels.get(name)??0:0}
+ get power(){return relicPower(this.equipped.filter(Boolean).length)}
+ get active(){return this.equipped.find(relic=>relic?.charge)??undefined}
+ get charge(){const relic=this.active;return relic?this.activeCharges.get(relic.name)??relic.cap??0:0}
+ set charge(amount:number){if(this.active)this.activeCharges.set(this.active.name,amount)}
+ switchWeapon(){
+  if(!this.loadout[1])return
+  this.slot=this.slot===0?1:0
+  this.refresh()
+ }
+ canEquipWeapon(weapon:Weapon){return weapon.slot===0||this.level(rangedTraining)>0}
+ dungeonWeapons(){return weapons.filter(w=>w.parent&&this.canEquipWeapon(w))}
+ resetRelics(){
+  this.levels.clear()
+  this.equipped.fill(null)
+  this.activeCharges.clear()
+ }
  curse(name:string){return this.contract?.name===name}
  blessed(name:string){return this.blessings.has(name)}
  sound(frequency:number){
@@ -87,10 +111,12 @@ class Game implements CombatBridge {
   }catch{/* The game is playable without audio. */}
  }
  gold(amount:number){
-  const gain=Math.round(amount*(1+this.level('Tithes')*.15+this.challenge.size*.13))
+  const total=amount*(1+this.level('Tithes')*.15+this.challenge.size*.13)
+  const whole=Math.floor(total)
+  const gain=whole+(total>whole&&Math.random()<total-whole?1:0)
   this.save.gold+=gain;this.earnedGold+=gain;this.persist()
  }
- heal(amount:number){this.hp=Math.min(this.maxHP,this.hp+Math.round(amount*(1+this.level('Herbalism')*.2)*(this.curse('Hollow Cup')?.5:1)));this.refresh()}
+ heal(amount:number){this.hp=Math.min(this.maxHP,this.hp+amount*(1+this.level('Herbalism')*.2)*(this.curse('Hollow Cup')?.5:1));this.refresh()}
  hurt(amount:number){
   this.hp=Math.max(0,this.hp-Math.round(amount*(this.curse('Ashen Bargain')?1.4:1)))
   this.sound(80)
@@ -107,24 +133,30 @@ class Game implements CombatBridge {
  gainCharge(type:string,amount:number){
   if(this.active?.charge===type&&this.active.cap) this.charge=Math.min(this.active.cap,this.charge+amount)
  }
- killed(elite:boolean,large:boolean){if(!large)this.gold(elite?13+this.floor*3:3+this.floor)}
+ killed(elite:boolean,large:boolean){
+  if(large)return
+  if(elite)this.gold(economy.eliteGold[this.floor])
+  else if(Math.random()<economy.normalDropChance)this.gold(economy.normalGold)
+ }
  notice(message:string){this.toast=message;this.toastTimer=performance.now()+3200;this.refresh()}
  addRelic(relic:Relic,done:Handler){
-  const level=this.level(relic.name)
-  if(level===3){this.gold(24);this.notice('Maximum evolution · +24 base gold');done();return}
-  this.levels.set(relic.name,relicLevel(level))
-  this.notice(relic.name+' · '+['','I','II','III'][level+1])
-  if(relic.charge&&this.active?.name!==relic.name){
-   const equip=()=>{
-    if(this.active)this.activeCharges.set(this.active.name,this.charge)
-    this.active=relic;this.charge=this.activeCharges.get(relic.name)??relic.cap??0
-    done()
-   }
-   if(!this.active){equip();return}
-   this.dialog('Active relic',relic.name,relic.detail,[{title:'Equip '+relic.name,action:equip},{title:'Keep '+this.active.name,action:done}])
-   return
+  const level=this.levels.get(relic.name)??0
+  if(level===3){
+   this.gold(economy.duplicateGold)
+   this.notice('Maximum evolution · +'+economy.duplicateGold+' base gold')
+   done();return
   }
+  this.levels.set(relic.name,relicLevel(level))
+  const empty=this.equipped.indexOf(null)
+  if(level===0&&empty>=0&&(!relic.charge||!this.active))this.equipRelic(relic,empty)
+  this.notice(relic.name+' · '+numerals[level+1]+(this.relicLevel(relic.name)?'':' · In inventory'))
   done()
+ }
+ equipRelic(relic:Relic,index:number){
+  if(!this.levels.has(relic.name)||index<0||index>=relicSlotCount||this.relicLevel(relic.name))return
+  if(relic.charge&&this.active&&this.equipped[index]!==this.active)return
+  this.equipped[index]=relic
+  this.refresh()
  }
  randomRelic(mainBoss=false){
   const bonus=mainBoss?1:0
@@ -141,9 +173,9 @@ class Game implements CombatBridge {
   return 'Blueprint discovered · '+name
  }
  newRun(){
-  this.loadout=[selectWeapon(this.save.loadout[0]),selectWeapon(this.save.loadout[1])]
+  this.loadout=[selectWeapon(this.save.loadout[0]),this.save.loadout[1]?selectWeapon(this.save.loadout[1]):null]
   this.maxHP=100+this.level('Vitality')*15;this.hp=this.maxHP
-  this.slot=0;this.contract=undefined;this.levels.clear();this.blessings.clear();this.active=undefined;this.charge=0;this.activeCharges.clear()
+  this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
   this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.statsBonus=0;this.dodgeDraughts=0
   this.scene.nextRoll=0;this.scene.nextAttack=0
   this.beginFloor(0)
@@ -170,13 +202,13 @@ class Game implements CombatBridge {
   }
   if(kind==='Combat'&&this.blessed('Hollow Cup')) this.heal(5)
   if(kind==='Miniboss'){
-   this.gold(29+this.floor*12)
+   this.gold(economy.minibossGold[this.floor])
    const relic=this.randomRelic()
    this.mandatory=true
    this.dialog('Miniboss reward',this.scene.bossName,'Take the relic to continue.',[this.relicChoice(relic,()=>this.resume())])
   }
   if(kind==='Boss'){
-   this.gold(66+this.floor*23)
+   this.gold(economy.bossGold[this.floor])
    const amount=this.floor+2+this.challenge.size
    this.save.materials+=amount;this.earnedMaterials+=amount
    const discovery=this.blueprint(.58)
@@ -185,7 +217,7 @@ class Game implements CombatBridge {
    const loot=shuffled(relics.filter(r=>r.name!==this.active?.name))
    const first=this.randomRelic(true)
    const other=loot.find(r=>r.rank<=this.floor+1&&r!==first)??loot[0]
-   const weapon=sample(weapons.filter(w=>w.parent))
+   const weapon=sample(this.dungeonWeapons())
    this.mandatory=true
    this.dialog('Main boss defeated',this.scene.bossName,`+${amount} forge material. Choose one reward. ${discovery}`,[
     this.relicChoice(first,finish),this.relicChoice(other,finish),
@@ -198,8 +230,9 @@ class Game implements CombatBridge {
  }
  weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}`}
  compare(w:Weapon,done:Handler,purchase?:Handler){
+  if(!this.canEquipWeapon(w)){done();return}
   const current=this.loadout[w.slot]
-  this.dialog(w.slot?'Projectile slot':'Melee slot',w.name,`Found: ${this.weaponStats(w)} · Equipped: ${current.name}, ${this.weaponStats(current)}`,[
+  this.dialog(w.slot?'Projectile slot':'Melee slot',w.name,`Found: ${this.weaponStats(w)} · Equipped: ${current?current.name+', '+this.weaponStats(current):'Empty'}`,[
    {title:purchase?'Buy and equip':'Equip',action:()=>{purchase?.();this.loadout[w.slot]=w;done()}},{title:'Leave it',action:done},
   ])
  }
@@ -211,15 +244,15 @@ class Game implements CombatBridge {
   if(room.kind==='Treasure'){
    this.dialog('Treasure chamber','Sealed coffer','Open the coffer and claim its contents.',[
     {title:'Open chest',action:()=>{
-     room.used=true;this.scene.drawRoom();this.gold(19+this.floor*8)
+     room.used=true;this.scene.drawRoom();this.gold(economy.chestGold[this.floor])
      if(Math.random()<.35){this.save.materials++;this.earnedMaterials++;this.persist()}
-     if(Math.random()<.35)this.heal(Math.random()<.4?35:15)
+     if(Math.random()<.21)this.heal(Math.random()<.22?35:15)
      const discovery=this.blueprint(.43)
      const relic=this.randomRelic()
      this.mandatory=true
      this.dialog('Chest opened',relic.name,discovery||'Claim the relic and choose whether to inspect the weapon.',[
       this.relicChoice(relic,()=>{
-       if(Math.random()<.65)this.compare(sample(weapons.filter(w=>w.parent)),()=>this.resume())
+       if(Math.random()<.65)this.compare(sample(this.dungeonWeapons()),()=>this.resume())
        else this.resume()
       }),
      ])
@@ -242,10 +275,10 @@ class Game implements CombatBridge {
   if(room.kind==='Secret'||room.kind==='Event'){
    this.dialog(room.kind,room.kind==='Secret'?'Hidden sanctuary':'The pilgrim’s fountain','Drink once to restore 40 HP.',[{title:'Drink',action:()=>{
     room.used=true;this.scene.drawRoom();this.heal(40+this.level('Springwater')*10)
-    if(room.kind==='Secret'){this.gold(18);const found=this.blueprint(.85);if(found)this.notice(found)}
+    if(room.kind==='Secret'){this.gold(economy.secretGold);const found=this.blueprint(.85);if(found)this.notice(found)}
     this.resume()
-   }},...(room.kind==='Event'?[{title:'Search the shrine',detail:'Collect 18 gold instead of drinking.',action:()=>{
-    room.used=true;this.gold(18);this.scene.drawRoom();this.resume()
+   }},...(room.kind==='Event'?[{title:'Search the shrine',detail:'Collect '+economy.eventGold+' gold instead of drinking.',action:()=>{
+    room.used=true;this.gold(economy.eventGold);this.scene.drawRoom();this.resume()
    }}]:[]),{title:'Leave',action:()=>this.resume()}])
   }
  }
@@ -269,7 +302,7 @@ class Game implements CombatBridge {
     }}
     return choice
    }
-   this.stock.set(id,[gear(0),gear(1),offer('Large potion',17,()=>this.heal(35)),offer('Field tonic',22,()=>{this.statsBonus+=.08}),offer('Dodge draught',12,()=>{this.dodgeDraughts++})])
+   this.stock.set(id,[gear(0),...(this.loadout[1]?[gear(1)]:[]),offer('Large potion',17,()=>this.heal(35)),offer('Field tonic',22,()=>{this.statsBonus+=.08}),offer('Dodge draught',12,()=>{this.dodgeDraughts++})])
   }
   this.dialog('Merchant','Dungeon provisions',this.save.gold+' gold. Dodge draughts skip the next dodge cooldown.',[
    ...this.stock.get(id)!.map(choice=>({...choice,disabled:choice.disabled||this.save.gold<(choice.cost??0)})),{title:'Leave shop',action:()=>this.resume()},
@@ -277,7 +310,7 @@ class Game implements CombatBridge {
  }
  finish(won:boolean){
   if(won){this.save.victories++;this.persist()}
-  this.mandatory=false;this.halt()
+  this.mandatory=false;this.resetRelics();this.halt()
   const minutes=Math.floor((performance.now()-this.started)/60000)
   this.dialog(won?'Victory':'Fallen in battle',won?'The Fallen King is slain':'Return to the keep',`${floors[this.floor].name} · ${minutes} min · ${this.earnedGold} gold earned · ${this.earnedMaterials} forge material. ${won&&this.save.victories===1?'Challenges unlocked.':''}`,[{title:'Return to castle',action:()=>this.castle()}])
   this.menu='summary'
@@ -322,7 +355,7 @@ class Game implements CombatBridge {
   }
   this.mount('The Last Keep','Castle hub',`${this.save.gold} gold · ${this.save.materials} forge material · ${this.save.victories} victories`,[
    {title:'Begin descent',detail:'Enter the Forgotten Castle',action:()=>this.newRun()},
-   {title:'Starting loadout',detail:this.save.loadout.join(' / '),action:()=>this.chooseLoadout()},
+   {title:'Starting loadout',detail:this.save.loadout.filter(Boolean).join(' / '),action:()=>this.chooseLoadout()},
    {title:'Blacksmith',detail:'Blueprints and permanent weapons',action:()=>this.craft()},
    {title:'Castle upgrades',detail:'Expand your keep',action:()=>this.improve()},
    {title:'Challenges',detail:this.save.victories?'Optional run modifiers':'Unlocks after first victory',disabled:!this.save.victories,action:()=>this.challengeMenu()},
@@ -332,6 +365,11 @@ class Game implements CombatBridge {
  chooseLoadout(){
   const form=document.createElement('div')
   for(const slot of [0,1] as const){
+   if(slot===1&&!this.level(rangedTraining)){
+    const locked=document.createElement('p')
+    locked.textContent='Projectile slot locked · Requires '+rangedTraining
+    form.append(locked);continue
+   }
    const label=document.createElement('label');label.textContent=slot?'Projectile':'Melee'
    const select=document.createElement('select')
    for(const w of weapons.filter(w=>w.slot===slot&&this.save.unlocked.includes(w.name))){
@@ -348,7 +386,7 @@ class Game implements CombatBridge {
    ...weapons.filter(w=>w.parent).map(w=>{
     const crafted=this.save.unlocked.includes(w.name), blueprint=this.save.blueprints.includes(w.name), parent=this.save.unlocked.includes(w.parent!)
     const advanced=w.cost!>=4&&!this.level('Forge')
-    return {title:w.name,detail:crafted?'Crafted':`${w.cost} material · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}`,disabled:crafted||!blueprint||!parent||advanced||this.save.materials<w.cost!,action:()=>{
+    return {title:w.name,detail:crafted?'Crafted':`${w.cost} material · Requires ${w.parent}${blueprint?'':' · Blueprint undiscovered'}${advanced?' · Requires Forge':''}${this.canEquipWeapon(w)?'':' · Requires '+rangedTraining}`,disabled:!this.canEquipWeapon(w)||crafted||!blueprint||!parent||advanced||this.save.materials<w.cost!,action:()=>{
      this.save.materials-=w.cost!;this.save.unlocked.push(w.name);this.persist();this.craft()
     }}
    }),{title:'Back to castle',action:()=>this.castle()},
@@ -359,7 +397,7 @@ class Game implements CombatBridge {
    ...upgrades.map(u=>{
     const level=this.level(u.name),cost=upgradeCost(u.cost,level)
     return {title:u.name+' '+level+'/'+u.max,detail:`${u.building} · ${u.detail} · ${level>=u.max?'Maxed':cost+' gold'}${u.requires?' · Requires '+u.requires:''}`,disabled:level>=u.max||this.save.gold<cost||!!u.requires&&!this.level(u.requires),action:()=>{
-     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;this.persist();this.improve()
+     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;if(u.name===rangedTraining)unlockRanged(this.save);this.persist();this.improve()
     }}
    }),{title:'Back to castle',action:()=>this.castle()},
   ])
@@ -381,29 +419,72 @@ class Game implements CombatBridge {
   return ()=>this.castle()
  }
  settings(back:Handler){
-  this.dialog('Settings','Controls','WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I inventory · Tab map · Esc pause',[
+  this.dialog('Settings','Controls','WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · R relic inventory · Tab map · Esc pause',[
    {title:this.save.mute?'Enable sound':'Mute sound',action:()=>{this.save.mute=!this.save.mute;this.persist();this.settings(back)}},
    {title:'Back',action:back},
   ])
  }
  pause(){
-  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Inventory',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run equipment and relics will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
+  this.dialog('Run paused','Take a breath','',[{title:'Resume',action:()=>this.resume()},{title:'Relics',action:()=>this.inventory()},{title:'Settings and controls',action:()=>this.settings(()=>this.pause())},{title:'End run',action:()=>this.dialog('End run','Return to the keep?','Run equipment and relics will reset.',[{title:'End run',action:()=>this.finish(false)},{title:'Keep playing',action:()=>this.pause()}])}])
  }
  resume(){
   this.paused=false;this.mandatory=false;this.menu='run';hud.hidden=false
   overlay.replaceChildren()
   this.refresh()
  }
- inventory(){
-  this.dialog('Run inventory','Equipment and relics',this.loadout.map(w=>w.name+' · '+this.weaponStats(w)).join(' / '),[
-   ...relics.filter(r=>this.has(r.name)).map(r=>({title:r.name+' '+['','I','II','III'][this.level(r.name)],detail:rarity[r.rank]+' · '+r.detail+(this.active===r?' · Equipped':''),disabled:!r.charge||this.active===r,action:()=>{
-    if(this.active)this.activeCharges.set(this.active.name,this.charge)
-    this.active=r;this.charge=this.activeCharges.get(r.name)??r.cap??0;this.inventory()
-   }})),{title:'Return to dungeon',action:()=>this.resume()},
-  ])
+ inventory(selected?:Relic){
+  const slots=document.createElement('div')
+  slots.className='relic-equipment'
+  const title=document.createElement('p')
+  const count=this.equipped.filter(Boolean).length
+  title.textContent=count+' / '+relicSlotCount+' equipped · '+pct(this.power)+' power'
+  slots.append(title)
+  const row=document.createElement('div')
+  row.className='relic-slots'
+  this.equipped.forEach((relic,index)=>{
+   const button=document.createElement('button')
+   button.textContent=(index+1)+' · '+(relic?icon(relic)+' '+relic.name+' '+numerals[this.relicLevel(relic.name)]:'Empty')
+   if(relic)button.style.color=colors[relic.rank]
+   button.disabled=selected?!!selected.charge&&!!this.active&&relic!==this.active:!relic
+   button.title=selected?'Equip '+selected.name+' in slot '+(index+1):'Unequip '+(relic?.name??'')
+   if(selected&&!button.disabled){
+    const resultingPower=relicPower(count+(relic?0:1))
+    const result=document.createElement('small')
+    result.textContent=pct(resultingPower)+' power'
+    button.append(document.createElement('br'),result)
+   }
+   button.onclick=()=>{
+    if(selected)this.equipRelic(selected,index)
+    else {this.equipped[index]=null;this.refresh()}
+    this.inventory()
+   }
+   row.append(button)
+  })
+  slots.append(row)
+  if(selected){
+   const preview=document.createElement('p')
+   preview.textContent='Choose a slot for '+selected.name+'. Select an occupied slot to replace its relic.'
+   slots.append(preview)
+  }
+  const owned=relics.filter(r=>this.levels.has(r.name))
+  this.dialog('Run inventory','Relic equipment',owned.length?'Choose a relic to equip it. Select an equipped slot to unequip it.':'Collect relics in treasure rooms and from boss rewards.',[
+   ...owned.map(r=>{
+    const level=this.levels.get(r.name)!
+    const equipped=this.relicLevel(r.name)>0
+    const effect=equipped
+     ? relicEffect(r,level,this.power)
+     : 'At '+pct(this.power)+': '+relicEffect(r,level,this.power)
+    return {title:icon(r)+' '+r.name+' '+numerals[level],detail:rarity[r.rank]+' · '+(equipped?'Equipped':'In inventory')+' · '+r.detail+' '+effect,action:()=>{
+     if(equipped){this.equipped[this.equipped.indexOf(r)]=null;this.refresh();this.inventory()}
+     else this.inventory(r)
+    }}
+   }),
+   {title:'Return to dungeon',action:()=>this.resume()},
+  ],slots)
+  this.menu='relics'
  }
  mapMarkup(full:boolean){
-  const compass=this.level('Glass Compass')
+  const compass=this.relicLevel('Glass Compass')
   const revealed=new Set(this.rooms.filter(room=>room.seen||compass===3||
    (room.kind==='Secret'&&compass>=1)||(room.kind==='Treasure'&&compass>=2)||
    ((compass>=2||this.level('Survey'))&&room.kind!=='Secret'&&room.neighbors.some(id=>this.rooms[id].seen))).map(room=>room.id))
@@ -426,13 +507,13 @@ class Game implements CombatBridge {
   const boss=this.scene.foes.find(f=>f.large&&f.hp>0)
   const area=floors[this.floor]
   const hint=this.room.used?'':['Shop','Treasure','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
-  const active=this.active
   const toast=performance.now()<this.toastTimer?this.toast:''
   hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
    ${boss?`<div class="boss">${this.scene.bossName}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
-   <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}">${i===0?'⚔':'➶'} ${w.name}</span>`).join('')}${active?`<span style="color:${colors[active.rank]}">E · ${active.name}<div class="charge">${bar(this.charge/(active.cap??1))}</div></span>`:''}</div>`
+   <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Requires '+rangedTraining}">${i===0?'⚔':'➶'} ${w?.name??'Locked · '+rangedTraining}</span>`).join('')}</div>
+   <div class="relic-hud"><div class="relic-hint">R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
  }
 }
 export const game=new Game()

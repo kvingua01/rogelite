@@ -2,6 +2,8 @@ import Phaser from 'phaser'
 import { arena, cover, H, textures, tones, W } from './art'
 import { type Effect, type Relic, type Weapon } from './data'
 import { floors, type Room } from './dungeon'
+import { encounters, enemyTiming } from './balance'
+import { activeDamage, bellHeal, bellRadius, chaliceHeal, dotDuration, dotRate, duskHeal, frostDuration, mirrorRange, rimeDamage, shadowDamage, wardDuration } from './relic-effects'
 
 const clamp = Phaser.Math.Clamp
 const weaponRelicSynergies=[
@@ -11,15 +13,17 @@ const weaponRelicSynergies=[
  {weapon:'Night Knives',relic:'Dusk Crown',level:1,contract:'Broken Shield',result:'pierce'},
 ] as const
 const effectColor:Record<Effect,number> = {fire:0xff9167,poison:0x9bda85,frost:0x9bddff,lightning:0xffdc77,shadow:0xd29bf5}
+const relicElements:Record<Effect,string>={fire:'Cinder Heart',poison:'Bog Idol',frost:'Rime Seal',lightning:'Forked Bolt',shadow:'Dusk Crown'}
+type Effects = Partial<Record<Effect,number>>
 type Point = {x:number;y:number}
-type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effect[];pierce:number;bounce:number;home:boolean;hit:Set<Foe>}
-type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;burn:number;dot:number;phase:number;radius:number;damage:number}
+type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>}
+type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;warn:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;radius:number;damage:number}
 type Hazard = Point & {r:number;warn:number;life:number;damage:number;color:number}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
- slot:0|1; loadout:[Weapon,Weapon]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
- active?:Relic; charge:number; challenge:Set<string>;
- level(name:string):number; has(name:string):boolean; curse(name:string):boolean; blessed(name:string):boolean;
+ slot:0|1; loadout:[Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
+ readonly active?:Relic; charge:number; readonly power:number; challenge:Set<string>;
+ level(name:string):number; relicLevel(name:string):number; switchWeapon():void; curse(name:string):boolean; blessed(name:string):boolean;
  consumeDodgeDraught():boolean; attackPower(damage:number):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
  killed(elite:boolean, large:boolean):void; clear():void; enter(id:number, dx:number,dy:number):void; interact():void; sound(frequency:number):void;
  refresh():void;
@@ -46,6 +50,7 @@ export class Combat extends Phaser.Scene {
  attackQueued=false
  rollQueued=false
  relicQueued=false
+ velocity={x:0,y:0}
  hudTimer=0
  locked=false
  bossName=''
@@ -58,7 +63,7 @@ export class Combat extends Phaser.Scene {
   this.input.on('pointerdown',(pointer:Phaser.Input.Pointer)=>{
    if(pointer.leftButtonDown()&&this.mode==='run'&&!this.bridge.paused)this.attackQueued=true
   })
-  this.input.on('wheel',()=>{if(this.mode==='run'&&!this.bridge.paused){this.bridge.slot=this.bridge.slot===0?1:0;this.bridge.refresh()}})
+  this.input.on('wheel',()=>{if(this.mode==='run'&&!this.bridge.paused)this.bridge.switchWeapon()})
   this.showCover()
  }
  showCover() {
@@ -76,16 +81,27 @@ export class Combat extends Phaser.Scene {
   const { room, floor, challenge }=this.bridge
   this.player.setScale(1).setPosition(dx>0?35:dx<0?W-35:W/2,dy>0?37:dy<0?H-37:H/2).setVisible(true).clearTint()
   this.attackQueued=false;this.rollQueued=false;this.relicQueued=false
+  this.velocity={x:0,y:0}
   this.rollUntil=0; this.invulnerable=this.elapsed+280
   this.locked=!room.cleared&&['Combat','Miniboss','Boss'].includes(room.kind)
   const metadata=floors[floor]
   this.bossName=room.kind==='Boss'?metadata.boss:room.kind==='Miniboss'?metadata.minis[room.patch]:''
   if (this.locked) {
    if(this.bossName) this.spawn(W*.69,H*.49,(floor*2+room.patch)%7,room.kind==='Boss',true)
-   else for(let i=0;i<4+floor;i++){
-    const x=i%2===0?104+i*15:414-i*13
-    const y=i%3===0?75:i%3===1?205:107
-    this.spawn(x,y,(floor*2+room.patch+i)%7)
+   else {
+    const count=encounters.enemies[floor]
+    let specials=0
+    for(let i=0;i<count;i++){
+     const angle=(i+.3)*Math.PI*2/count
+     const x=W/2+Math.cos(angle)*145
+     const y=H/2+Math.sin(angle)*83
+     const foe=this.spawn(x,y,(floor*2+room.patch+i)%7,false,false,specials<count-2)
+     if(foe.role==='special')specials++
+    }
+    const basic=this.foes.filter(foe=>foe.role!=='special')
+    const meleeCount=Math.round(basic.length*encounters.meleeShare[room.patch])
+    const offset=Math.floor(Math.random()*basic.length)
+    basic.forEach((foe,index)=>{foe.role=(index+offset)%basic.length<meleeCount?'melee':'ranged'})
    }
   }
   if ((room.kind==='Trap' || (this.locked && (floor>0 || challenge.has('Scorched Ground')))) && !room.cleared) {
@@ -113,94 +129,114 @@ export class Combat extends Phaser.Scene {
    g.fillStyle(0x473044).fillRect(W/2-2,H/2-3,4,5)
   }
  }
- spawn(x:number,y:number,kind:number,boss=false,large=false) {
+ spawn(x:number,y:number,kind:number,boss=false,large=false,allowSpecial=true) {
   const {floor,challenge}=this.bridge
-  const elite=!large&&Math.random()<(challenge.has('Elite Host')?.42:.09+floor*.04)
+  const elite=!large&&allowSpecial&&Math.random()<(challenge.has('Elite Host')?.42:encounters.eliteShare+floor*.035)
   const elements:Effect[]=['fire','poison','frost','lightning','shadow']
-  const effect=!large&&Math.random()<.19?elements[(kind+floor)%elements.length]:undefined
-  const max=(boss?420+floor*180:large?160+floor*95:36+floor*19)*(elite?1.65:1)*(large&&challenge.has('Iron Bosses')?1.45:1)
+  const effect=!large&&allowSpecial&&Math.random()<.19?elements[(kind+floor)%elements.length]:undefined
+  const role=large||elite||effect||(allowSpecial&&kind>=2&&Math.random()<encounters.specialShare)?'special':'melee'
+  const max=(boss?420+floor*180:large?160+floor*95:36+floor*19)*(elite?1.8:1)*(large&&challenge.has('Iron Bosses')?1.45:1)
   const sprite=this.add.image(x,y,boss?'boss'+floor:'foe'+kind).setScale(boss?2.65:large?1.8:1).setDepth(3)
   if(effect) sprite.setTint(effectColor[effect])
   if(elite&&!effect) sprite.setTint(0xf2d393)
-  this.foes.push({x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+750+Math.random()*400,warn:0,angle:0,slow:0,burn:0,dot:0,phase:0,radius:boss?21:large?15:8,damage:(large?12:8)+floor*3+(elite?5:0)+(effect?2:0)})
+  const foe:Foe={x,y,sprite,kind,boss,large,elite,effect,max,hp:max,next:this.elapsed+450+Math.random()*350,warn:0,angle:0,slow:0,slowPower:0,burn:0,dot:0,phase:0,role,flank:(this.foes.length%2?1:-1),strike:0,radius:boss?21:large?15:8,damage:(large?15:encounters.basicDamage)+floor*3+(elite?encounters.eliteBonusDamage:0)+(effect?2:0)}
+  this.foes.push(foe)
+  return foe
  }
  flash(x:number,y:number,r:number,color:number,angle?:number) {
   if(this.flashes.length<90) this.flashes.push({x,y,r,color,angle,life:180,max:180})
  }
- damage(foe:Foe,amount:number,effects:Effect[]=[]) {
+ damage(foe:Foe,amount:number,effects:Effects={}) {
   if(foe.hp<=0) return
   const b=this.bridge
   foe.hp-=amount
   b.gainCharge('damage',amount)
-  foe.sprite.setAlpha(.55)
-  this.flash(foe.x,foe.y,8,effects[0]?effectColor[effects[0]]:0xf7ddac)
-  if(effects.includes('fire')||effects.includes('poison')) {
-   const level=Math.max(effects.includes('fire')?b.level('Cinder Heart'):0,effects.includes('poison')?b.level('Bog Idol'):0)
-   foe.burn=this.elapsed+1300+level*200
-   foe.dot=Math.max(foe.dot,amount*(.075+level*.035))
+  if(amount>=1){
+   foe.sprite.setAlpha(.55)
+   const effect=Object.keys(effects)[0] as Effect|undefined
+   this.flash(foe.x,foe.y,8,effect?effectColor[effect]:0xf7ddac)
   }
-  if(effects.includes('frost')||(effects.includes('poison')&&b.level('Bog Idol')===3)) foe.slow=this.elapsed+700+b.level('Rime Seal')*220
-  if(effects.includes('lightning')) {
-   const target=this.foes.find(other=>other!==foe&&other.hp>0&&Phaser.Math.Distance.Between(other.x,other.y,foe.x,foe.y)<53)
-   if(target) this.damage(target,amount*.28,[])
+  for(const effect of ['fire','poison'] as const){
+   const strength=effects[effect]
+   if(!strength)continue
+   const level=b.relicLevel(relicElements[effect])*(strength===1?b.power:1)
+   const dot=amount*dotRate(level)*strength
+   if(foe.burn<=this.elapsed||dot>=foe.dot){
+    foe.burn=this.elapsed+dotDuration(level)*strength
+    foe.dot=dot
+   }
+  }
+  const slow=effects.frost??(b.relicLevel('Bog Idol')===3?effects.poison:0)
+  if(slow){
+   foe.slow=this.elapsed+frostDuration(b.relicLevel('Rime Seal')*(slow===1?b.power:1))*slow
+   foe.slowPower=.48*slow
+  }
+  const lightning=effects.lightning
+  if(lightning) {
+   const target=this.foes.find(other=>other!==foe&&other.hp>0&&Phaser.Math.Distance.Between(other.x,other.y,foe.x,foe.y)<53*lightning)
+   if(target) this.damage(target,amount*.28*lightning)
   }
   if(foe.hp>0) return
   foe.sprite.destroy()
   this.flash(foe.x,foe.y,foe.radius*2,0xeeb184)
   b.killed(foe.elite,foe.large)
   b.gainCharge('kills',1)
-  if(b.level('Dusk Crown')===3) b.heal(2)
-  if(!foe.large&&Math.random()<.16) this.drops.push({x:foe.x,y:foe.y,amount:Math.random()<.22?35:15})
+  if(b.relicLevel('Dusk Crown')===3) b.heal(duskHeal*b.power)
+  if(!foe.large&&Math.random()<encounters.healChance) this.drops.push({x:foe.x,y:foe.y,amount:Math.random()<encounters.largeHealChance?35:15})
  }
- projectile(x:number,y:number,angle:number,speed:number,range:number,damage:number,friendly:boolean,effects:Effect[]=[],pierce=0,bounce=0,home=false) {
+ projectile(x:number,y:number,angle:number,speed:number,range:number,damage:number,friendly:boolean,effects:Effects={},pierce=0,bounce=0,home=0) {
   if(this.shots.length>=220) return
   this.shots.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:range/speed*1000,damage,friendly,effects,pierce,bounce,home,hit:new Set()})
  }
  attack(angle:number) {
   const b=this.bridge, weapon=b.loadout[b.slot],p=this.player
+  if(!weapon)return
   this.nextAttack=this.elapsed+weapon.delay
-  const effects=new Set<Effect>()
-  if(weapon.effect) effects.add(weapon.effect)
-  const relicEffects:[string,Effect][]=[['Cinder Heart','fire'],['Bog Idol','poison'],['Rime Seal','frost'],['Forked Bolt','lightning'],['Dusk Crown','shadow']]
-  for(const [name,effect] of relicEffects) if(b.has(name)) effects.add(effect)
-  const elemental=[...effects]
+  const elements:Effects={}
+  for(const effect of Object.keys(relicElements) as Effect[]) if(b.relicLevel(relicElements[effect]))elements[effect]=b.power
+  if(weapon.effect)elements[weapon.effect]=1
   const synergies=weaponRelicSynergies.filter(rule=>
-   (!rule.weapon||rule.weapon===weapon.name)&&(!rule.relic||b.level(rule.relic)>=rule.level)&&(!rule.contract||b.blessed(rule.contract)))
-  const combo=(result:string)=>synergies.some(rule=>rule.result===result)
-  const amount=b.attackPower(weapon.damage)*(b.level('Rime Seal')===3?1.16:1)*(b.level('Dusk Crown')?1+.09*b.level('Dusk Crown'):1)
+   (!rule.weapon||rule.weapon===weapon.name)&&(!rule.relic||b.relicLevel(rule.relic)>=rule.level)&&(!rule.contract||b.blessed(rule.contract)))
+  const combo=(result:string)=>synergies.find(rule=>rule.result===result)
+  const amount=b.attackPower(weapon.damage)*(1+(b.relicLevel('Rime Seal')===3?rimeDamage*b.power:0))*(1+shadowDamage(b.relicLevel('Dusk Crown'))*b.power)
   if(b.slot===0) {
    const burst=combo('blast')
-   const range=weapon.range+(burst?15:0)
+   const range=weapon.range+(burst?15*(burst.relic?b.power:1):0)
    this.flash(p.x,p.y,range,burst?effectColor.fire:0xf6d5a5,angle)
    for(const foe of this.foes) {
     const distance=Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)
-    if(distance<range+foe.radius&&(distance<19||Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(foe.y-p.y,foe.x-p.x)-angle))<1.03||burst)) this.damage(foe,amount,elemental)
+    if(distance<range+foe.radius&&(distance<19||Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(foe.y-p.y,foe.x-p.x)-angle))<1.03||burst)) this.damage(foe,amount,elements)
    }
   } else {
-   const forks=b.level('Forked Bolt')
-   const mirror=b.level('Mirror Quiver')
-   const pierce=(forks===3?2:0)+(b.blessed('Broken Shield')&&effects.has('shadow')?2:0)+(combo('pierce')?2:0)
-   for(const offset of combo('split')?[-.34,-.17,0,.17,.34]:forks>=2?[-.2,0,.2]:forks===1?[-.1,.1]:[0]) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirror*45,amount*(forks?.78:1),true,elemental,pierce,mirror?2:0,mirror===3)
+   const forks=b.relicLevel('Forked Bolt')
+   const mirror=b.relicLevel('Mirror Quiver')
+   const pierce=Math.round(((forks===3?2:0)+(combo('pierce')?2:0))*b.power)+(b.blessed('Broken Shield')&&elements.shadow?2:0)
+   this.projectile(p.x,p.y,angle,225,weapon.range+mirrorRange(mirror)*b.power,amount,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0)
+   const spread=combo('split')?[-.34,-.17,.17,.34]:forks>=2?[-.2,.2]:forks===1?[.17]:[]
+   for(const offset of spread) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirrorRange(mirror)*b.power,amount*.78*b.power,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0)
   }
   b.sound(b.slot===0?170:285)
  }
  activate() {
   const b=this.bridge, relic=b.active
   if(!relic?.cap||b.charge<relic.cap) return
-  const level=b.level(relic.name)
+  const level=b.relicLevel(relic.name),power=b.power
   b.charge=0
-  this.flash(this.player.x,this.player.y,140,0xd9b4fc)
-  if(relic.name==='Blood Chalice') b.heal(22+level*7)
-  if(relic.name==='Grave Lantern'||(relic.name==='Blood Chalice'&&level===3)) this.invulnerable=this.elapsed+650+level*520
+  const radius=bellRadius*power
+  this.flash(this.player.x,this.player.y,relic.name==='Sun Bell'?radius:90,0xd9b4fc)
+  if(relic.name==='Blood Chalice') b.heal(chaliceHeal(level)*power)
+  if(relic.name==='Grave Lantern'||(relic.name==='Blood Chalice'&&level===3)) this.invulnerable=Math.max(this.invulnerable,this.elapsed+wardDuration(level)*power)
   if(relic.name==='Sun Bell'||relic.name==='Thunder Rune'||(relic.name==='Grave Lantern'&&level===3)) for(const foe of this.foes) {
-   if(relic.name!=='Sun Bell'||Phaser.Math.Distance.Between(foe.x,foe.y,this.player.x,this.player.y)<140) this.damage(foe,27+level*14,relic.name==='Thunder Rune'?(level===3?['lightning','frost']:['lightning']):['fire'])
+   const effects:Effects=relic.name==='Thunder Rune'?(level===3?{lightning:1,frost:power}:{lightning:1}):{fire:power}
+   if(relic.name!=='Sun Bell'||Phaser.Math.Distance.Between(foe.x,foe.y,this.player.x,this.player.y)<radius) this.damage(foe,activeDamage(level)*power,effects)
   }
-  if(relic.name==='Sun Bell'&&level===3) b.heal(12)
+  if(relic.name==='Sun Bell'&&level===3) b.heal(bellHeal*power)
   b.sound(500)
  }
  move(delta:number) {
   const b=this.bridge,k=this.keys,p=this.player
   const x=Number(k.D.isDown)-Number(k.A.isDown),y=Number(k.S.isDown)-Number(k.W.isDown)
+  const before={x:p.x,y:p.y}
   const aim=Math.atan2(this.input.activePointer.worldY-p.y,this.input.activePointer.worldX-p.x)
   p.setFlipX(Math.cos(aim)<0)
   if(this.rollQueued&&this.elapsed>=this.nextRoll) {
@@ -225,6 +261,7 @@ export class Combat extends Phaser.Scene {
    if((dx!==0&&Math.abs(p.y-H/2)<18&&(dx<0?p.x<23:p.x>W-23))||(dy!==0&&Math.abs(p.x-W/2)<18&&(dy<0?p.y<24:p.y>H-24))) { b.enter(id,dx,dy);return }
   }
   p.x=clamp(p.x,21,W-21);p.y=clamp(p.y,22,H-22)
+  this.velocity={x:(p.x-before.x)/delta,y:(p.y-before.y)/delta}
   p.setAlpha(this.elapsed<this.invulnerable?.65:1)
   p.setScale(1,this.elapsed<this.rollUntil?.8:x||y?1+Math.sin(this.elapsed/52)*.045:1)
   if((this.attackQueued||this.input.activePointer.leftButtonDown())&&this.elapsed>=this.nextAttack&&this.elapsed>=this.rollUntil) this.attack(aim)
@@ -244,38 +281,55 @@ export class Combat extends Phaser.Scene {
    if(b.floor===1) for(const [dx,dy] of [[-60,0],[60,0],[0,-51],[0,51]]) this.hazards.push({
     x:clamp(foe.x+dx,26,W-26),y:clamp(foe.y+dy,28,H-28),r:31,warn:this.elapsed+780,life:this.elapsed+1010,damage:foe.damage+5,color:0xc8b46e,
    })
-   if(b.floor===2&&phase===2) for(let i=0;i<16;i++) this.projectile(foe.x,foe.y,i*Math.PI/8,106,500,foe.damage,false,['fire'])
+   if(b.floor===2&&phase===2) for(let i=0;i<16;i++) this.projectile(foe.x,foe.y,i*Math.PI/8,106,500,foe.damage,false,{fire:1})
    if(b.floor===0) for(const dy of [-27,27]) this.spawn(foe.x,clamp(foe.y+dy,35,H-35),0)
   }
   if(foe.warn&&this.elapsed>=foe.warn) {
    foe.warn=0
-   foe.next=this.elapsed+(foe.large?1250:1480)-phase*210
+   const cooldown=foe.large?enemyTiming.bossCooldown:foe.role==='melee'?enemyTiming.meleeCooldown:foe.role==='ranged'?enemyTiming.rangedCooldown:enemyTiming.specialCooldown
+   foe.next=this.elapsed+cooldown*(foe.elite?.8:1)-phase*160
+   foe.strike=this.elapsed+160
    const bossPatterns=[[0,2,5],[4,2,4],[3,2,5]]
-   const pattern=foe.boss?bossPatterns[b.floor][(Math.floor(this.elapsed/1050)+phase)%3]:foe.kind
+   const pattern=foe.boss?bossPatterns[b.floor][(Math.floor(this.elapsed/1050)+phase)%3]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind
    const color=foe.effect?effectColor[foe.effect]:tones[foe.kind]
    if(pattern===0||pattern===3) {
     const distance=pattern===3?Math.min(84,range):0
     foe.x=clamp(foe.x+Math.cos(foe.angle)*distance,26,W-26)
     foe.y=clamp(foe.y+Math.sin(foe.angle)*distance,28,H-28)
-    this.hazards.push({x:foe.x,y:foe.y,r:foe.large?48:21,warn:this.elapsed,life:this.elapsed+140,damage:foe.damage,color})
+    const reach=foe.large?48:encounters.meleeReach
+    this.flash(foe.x,foe.y,reach,color,foe.angle)
+    const impactAngle=Math.atan2(p.y-foe.y,p.x-foe.x)
+    if(Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)<reach&&Math.abs(Phaser.Math.Angle.Wrap(impactAngle-foe.angle))<1.3)this.hitPlayer(foe.damage)
+    if(b.paused)return
    } else if(pattern===4) {
     const count=foe.large?3+phase:1
     for(let i=0;i<count;i++) this.hazards.push({x:clamp(p.x+(i%2?(i+1)*16:-i*13),26,W-26),y:clamp(p.y+i*12-8,28,H-28),r:foe.large?22:16,warn:this.elapsed+420+i*70,life:this.elapsed+1120+i*70,damage:foe.damage,color})
    } else {
     const radial=pattern===5||pattern===6||(foe.boss&&phase>0)
     const count=radial?7+phase*4+(b.challenge.has('Projectile Storm')?4:0):pattern===2?3:1
+    const speed=enemyTiming.projectileSpeed+b.floor*12+phase*9
+    const bend=foe.role==='ranged'?Phaser.Math.Angle.RotateTo(foe.angle,Math.atan2(p.y+clamp(this.velocity.y*.16,-24,24)-foe.y,p.x+clamp(this.velocity.x*.16,-24,24)-foe.x),.32):foe.angle
     for(let i=0;i<count;i++){
-     const direction=foe.angle+(radial?i*Math.PI*2/count:(i-(count-1)/2)*.24)
-     this.projectile(foe.x,foe.y,direction,84+b.floor*12+phase*9,480,foe.damage,false,foe.boss&&b.floor===2?['fire']:foe.effect?[foe.effect]:[])
+     const direction=bend+(radial?i*Math.PI*2/count:(i-(count-1)/2)*.24)
+     this.projectile(foe.x,foe.y,direction,speed,480,foe.damage,false,foe.boss&&b.floor===2?{fire:1}:foe.effect?{[foe.effect]:1}:{})
     }
    }
-  } else if(!foe.warn&&this.elapsed>=foe.next&&range<(foe.kind===0&&!foe.large?33:foe.kind===3&&!foe.large?100:300)) {
-   foe.warn=this.elapsed+(foe.large?560:470)-phase*70
-   foe.angle=angle
+  } else if(!foe.warn&&this.elapsed>=foe.next) {
+   const reach=foe.large?300:foe.role==='melee'?encounters.meleeReach+2:foe.role==='ranged'?235:foe.kind===0?27:foe.kind===3?100:275
+   if(range<reach){
+    const windup=foe.large?enemyTiming.bossWindup:foe.role==='melee'?enemyTiming.meleeWindup:foe.role==='ranged'?enemyTiming.rangedWindup:enemyTiming.specialWindup
+    foe.warn=this.elapsed+windup-phase*65
+    foe.angle=angle
+   }
   }
-  if(!foe.warn&&range>(foe.large?62:foe.kind===0?20:foe.kind===3?37:98)){
-   const speed=(foe.large?31:45+b.floor*7)*(b.challenge.has('Swift Foes')?1.27:1)*(foe.slow>this.elapsed?.52:1)*delta
-   foe.x+=Math.cos(angle)*speed;foe.y+=Math.sin(angle)*speed
+  const melee=foe.role==='melee'||(!foe.large&&foe.role==='special'&&foe.kind===0)
+  const desired=foe.large?62:melee?15:foe.role==='ranged'?112:foe.kind===3?37:98
+  const retreat=foe.role==='ranged'&&range<82
+  if(!foe.warn&&(range>desired||retreat)){
+   const speed=(foe.large?36:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7
+   const step=speed*(foe.elite?enemyTiming.eliteSpeed:1)*(b.challenge.has('Swift Foes')?1.27:1)*(foe.slow>this.elapsed?1-foe.slowPower:1)*delta
+   const approach=retreat?angle+Math.PI:angle+(melee&&range>34?foe.flank*.34:0)
+   foe.x+=Math.cos(approach)*step;foe.y+=Math.sin(approach)*step
    for(const other of this.foes){
     if(other===foe||other.hp<=0)continue
     const dx=foe.x-other.x,dy=foe.y-other.y,gap=Math.hypot(dx,dy)
@@ -285,15 +339,20 @@ export class Combat extends Phaser.Scene {
    }
    foe.x=clamp(foe.x,25,W-25);foe.y=clamp(foe.y,26,H-26)
   }
+  const scale=foe.boss?2.65:foe.large?1.8:1
+  const windup=foe.warn>0
+  const striking=foe.strike>this.elapsed
+  foe.sprite.setScale(scale*(striking?1.16:windup?.88:1),scale*(striking?.88:windup?1.12:1))
+  foe.sprite.setAngle(windup?(p.x<foe.x?12:-12):striking?(p.x<foe.x?-14:14):0)
   foe.sprite.setPosition(foe.x,foe.y).setAlpha(Math.min(1,foe.sprite.alpha+delta*7)).setFlipX(p.x<foe.x)
   if(foe.burn>this.elapsed) this.damage(foe,foe.dot*delta)
  }
  collision(shot:Shot,dt:number,delta:number) {
   const p=this.player
   if(shot.home) {
-   const target=this.foes.find(f=>f.hp>0&&!shot.hit.has(f)&&Phaser.Math.Distance.Between(f.x,f.y,shot.x,shot.y)<82)
+   const target=this.foes.find(f=>f.hp>0&&!shot.hit.has(f)&&Phaser.Math.Distance.Between(f.x,f.y,shot.x,shot.y)<82*shot.home)
    if(target) {
-    const angle=Phaser.Math.Angle.RotateTo(Math.atan2(shot.vy,shot.vx),Math.atan2(target.y-shot.y,target.x-shot.x),delta*4)
+    const angle=Phaser.Math.Angle.RotateTo(Math.atan2(shot.vy,shot.vx),Math.atan2(target.y-shot.y,target.x-shot.x),delta*4*shot.home)
     const speed=Math.hypot(shot.vx,shot.vy)
     shot.vx=Math.cos(angle)*speed;shot.vy=Math.sin(angle)*speed
    }
@@ -308,7 +367,7 @@ export class Combat extends Phaser.Scene {
   if(shot.friendly) {
    for(const foe of this.foes) if(foe.hp>0&&!shot.hit.has(foe)&&Phaser.Math.Distance.Between(foe.x,foe.y,shot.x,shot.y)<foe.radius+2) {
     shot.hit.add(foe);this.damage(foe,shot.damage,shot.effects)
-    if(shot.effects.includes('fire')&&this.bridge.level('Cinder Heart')===3) for(const target of this.foes) if(target!==foe&&Phaser.Math.Distance.Between(target.x,target.y,foe.x,foe.y)<30) this.damage(target,shot.damage*.35,['fire'])
+    if(shot.effects.fire&&this.bridge.relicLevel('Cinder Heart')===3) for(const target of this.foes) if(target!==foe&&Phaser.Math.Distance.Between(target.x,target.y,foe.x,foe.y)<30*this.bridge.power) this.damage(target,shot.damage*.35*this.bridge.power,{fire:this.bridge.power})
     if(shot.pierce--<=0) return false
    }
   } else if(Phaser.Math.Distance.Between(p.x,p.y,shot.x,shot.y)<9) {this.hitPlayer(shot.damage);return false}
@@ -327,15 +386,12 @@ export class Combat extends Phaser.Scene {
    g.lineStyle(1,h.color,.7).strokeCircle(h.x,h.y,h.r)
   }
   for(const f of this.foes) if(f.hp>0){
-   if(f.warn) {
-    const endX=f.x+Math.cos(f.angle)*(f.kind===3?82:29),endY=f.y+Math.sin(f.angle)*(f.kind===3?82:29)
-    g.lineStyle(2,0xf6ac78,.8).lineBetween(f.x,f.y,endX,endY).strokeCircle(f.x,f.y,f.radius+4)
-   }
    if(f.elite) g.lineStyle(1,0xfad78a,.7).strokeEllipse(f.x,f.y+8,24,11)
    if(!f.large&&f.hp<f.max) g.fillStyle(0x382934).fillRect(f.x-9,f.y-15,18,2).fillStyle(0xdb8180).fillRect(f.x-9,f.y-15,18*f.hp/f.max,2)
   }
   for(const shot of this.shots) {
-   const color=shot.effects[0]?effectColor[shot.effects[0]]:shot.friendly?0xf7e3ad:0xf188a7
+   const effect=Object.keys(shot.effects)[0] as Effect|undefined
+   const color=effect?effectColor[effect]:shot.friendly?0xf7e3ad:0xf188a7
    g.lineStyle(1,color,.55).lineBetween(shot.x,shot.y,shot.x-shot.vx*.024,shot.y-shot.vy*.024)
    g.fillStyle(color).fillRect(shot.x-1,shot.y-1,3,3)
   }
@@ -358,7 +414,10 @@ export class Combat extends Phaser.Scene {
   this.move(delta)
   if(b.paused||this.mode!=='run') return
   b.gainCharge('time',delta)
-  for(const foe of [...this.foes]) if(foe.hp>0) this.enemy(foe,delta)
+  for(const foe of [...this.foes]){
+   if(foe.hp>0)this.enemy(foe,delta)
+   if(b.paused||this.mode!=='run')return
+  }
   this.shots=this.shots.filter(shot=>this.collision(shot,dt,delta))
   this.hazards=this.hazards.filter(h=>h.life>this.elapsed)
   for(const h of this.hazards) if(h.warn<=this.elapsed&&Phaser.Math.Distance.Between(h.x,h.y,this.player.x,this.player.y)<h.r) this.hitPlayer(h.damage)
