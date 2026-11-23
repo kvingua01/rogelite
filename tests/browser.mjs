@@ -334,7 +334,9 @@ try {
    g.resetRelics();g.blessings.clear();g.statsBonus=0
    const start=(floor,patch)=>{
     g.beginFloor(floor)
-    g.enter(g.rooms.find(r=>r.kind==='Miniboss'&&r.patch===patch).id,0,0)
+    const room=g.rooms.find(r=>r.kind==='Miniboss'&&r.patch===patch)??g.rooms.findLast(r=>r.kind==='Combat'&&r.patch===patch)
+    room.kind='Miniboss'
+    g.enter(room.id,0,0)
     scene.player.setPosition(220,144)
     scene.invulnerable=Infinity
     return scene.foes[0]
@@ -454,7 +456,12 @@ try {
  const miniBalances=await read(g=>[g.save.gold,g.save.materials,g.levels.size])
  await read(g=>g.scene.damage(g.scene.foes[0],100000))
  await page.getByText('Miniboss reward',{exact:true}).waitFor()
- await page.locator('.panel .cards button').first().click()
+ const minibossChoices=page.locator('.panel .cards button')
+ assert.equal(await minibossChoices.count(),2)
+ const offered=await minibossChoices.evaluateAll(buttons=>buttons.map(button=>button.firstChild.textContent))
+ assert.equal(new Set(offered).size,2)
+ await minibossChoices.nth(1).click()
+ assert.ok(await page.evaluate(async name=>(await import('/src/main.ts')).game.levels.has(name),offered[1]))
  assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+24,miniBalances[1],miniBalances[2]+1])
  for(const [name,material] of [['Skeleton King','Cursed Bone'],['Blighted Guardian','Blighted Heart'],['Fallen King','Infernal Core']]){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))

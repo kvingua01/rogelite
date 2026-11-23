@@ -34,6 +34,7 @@ export function generate(rng = Math.random): Room[] {
       last = add(last.x, last.y + turn, patch, 'Miniboss', last)
     } else last = add(middle.x + 1, middle.y, patch, 'Miniboss', middle)
   }
+  sample(rooms.filter(room=>room.kind==='Miniboss'),rng).kind='Combat'
   add(last.x + 1, last.y, 3, 'Boss', last)
   sample(rooms.filter(room=>room.kind==='Secret'||room.kind==='Event'),rng).fountain=true
   return rooms

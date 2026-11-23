@@ -176,12 +176,14 @@ class Game implements CombatBridge {
   this.equipped[index]=relic
   this.refresh()
  }
- randomRelic(mainBoss=false){
+ randomRelic(mainBoss=false,exclude?:Relic){
   const bonus=mainBoss?1:0
+  const available=relics.filter(relic=>relic!==exclude)
   const weights=[64-this.floor*13-bonus*6,24+this.floor*4+bonus,10+this.floor*5+bonus*2,2+this.floor*4+bonus*3]
-  let roll=Math.random()*100
+   .map((weight,rank)=>available.some(relic=>relic.rank===rank)?weight:0)
+  let roll=Math.random()*weights.reduce((sum,weight)=>sum+weight,0)
   const rank=weights.findIndex(weight=>(roll-=weight)<0)
-  return sample(relics.filter(relic=>relic.rank===rank))
+  return sample(available.filter(relic=>relic.rank===rank))
  }
  blueprint(chance:number,abyssOnly=false){
   const available=weapons.filter(w=>w.parent&&(w.name===abyssalWeapon)===abyssOnly&&!this.save.blueprints.includes(w.name))
@@ -236,7 +238,8 @@ class Game implements CombatBridge {
    this.gold(economy.minibossGold[this.floor])
    const relic=this.randomRelic()
    this.mandatory=true
-   this.dialog('Miniboss reward',this.scene.bossName,'Take the relic to continue.',[this.relicChoice(relic,()=>this.resume())])
+   this.dialog('Miniboss reward',this.scene.bossName,'Choose one relic to continue.',
+    [relic,this.randomRelic(false,relic)].map(choice=>this.relicChoice(choice,()=>this.resume())))
   }
   if(kind==='Boss'){
    this.gold(economy.bossGold[this.floor])

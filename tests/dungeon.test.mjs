@@ -4,7 +4,7 @@ import {generate, generateAbyss, floors} from '../src/dungeon.ts'
 import {contractClear, decode, fresh, relicLevel, upgradeCost, upgrades} from '../src/data.ts'
 import {economy, encounters, goldMultiplierForFloor, waveCount, waveSize} from '../src/balance.ts'
 
-test('300 layouts contain every room type and connect every patch to its miniboss',()=>{
+test('300 layouts are connected and each contains exactly three minibosses',()=>{
  const types=['Entry','Combat','Treasure','Shop','Curse Altar','Secret','Trap','Miniboss','Boss','Event','Blacksmith']
  for(let seed=1;seed<=300;seed++){
   let state=seed
@@ -12,6 +12,7 @@ test('300 layouts contain every room type and connect every patch to its minibos
   assert.equal(new Set(rooms.map(r=>r.x+','+r.y)).size,rooms.length)
   for(const type of types)assert.ok(rooms.some(r=>r.kind===type),type)
   assert.equal(rooms.filter(room=>room.fountain).length,1)
+  assert.equal(rooms.filter(room=>room.kind==='Miniboss').length,3)
   const visit=(start,allowed)=>{
    const seen=new Set(),pending=[start]
    while(pending.length){
@@ -29,7 +30,7 @@ test('300 layouts contain every room type and connect every patch to its minibos
   for(let patch=0;patch<4;patch++){
    const group=rooms.filter(r=>r.patch===patch&&!['Entry','Boss'].includes(r.kind))
    assert.ok(group.length>=3&&group.length<=7)
-   assert.equal(group.filter(r=>r.kind==='Miniboss').length,1)
+   assert.ok(group.filter(r=>r.kind==='Miniboss').length<=1)
    assert.equal(visit(group[0].id,r=>group.includes(r)).size,group.length)
   }
  }
@@ -75,7 +76,7 @@ test('procedural floor gold estimates stay inside the economy targets',()=>{
  const floorGold=encounters.enemies.slice(0,3).map((count,floor)=>{
   const eliteChance=encounters.eliteShare+floor*.035
   const enemyGold=eliteChance*economy.eliteGold[floor]+(1-eliteChance)*economy.normalDropChance*economy.normalGold
-  return goldMultiplierForFloor(floor)*(averageRooms*waveCount(count)*waveSize*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold)
+  return goldMultiplierForFloor(floor)*(averageRooms*waveCount(count)*waveSize*enemyGold+3*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold)
  })
  assert.ok(floorGold[0]>=180&&floorGold[0]<=360,JSON.stringify(floorGold))
  const total=floorGold.reduce((sum,gold)=>sum+gold,0)
