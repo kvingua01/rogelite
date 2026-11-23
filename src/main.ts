@@ -229,13 +229,11 @@ class Game implements CombatBridge {
    this.contract.remaining=contractClear(this.contract.remaining,kind,wasCleared)
    if(!this.contract.remaining){this.blessings.add(name);this.contract=undefined;this.notice('Blessing earned · '+name)}
   }
-  if(kind==='Combat'){
-   if(this.blessed('Hollow Cup'))this.heal(5)
-   if(++this.roomsSinceHealing===healingRoomInterval){
-    this.roomsSinceHealing=0
-    this.scene.addRoomHealing(35)
-    this.notice('Healing reward · 6 combat rooms cleared')
-   }
+  if(kind==='Combat'&&this.blessed('Hollow Cup'))this.heal(5)
+  if((kind==='Combat'||kind==='Miniboss')&&++this.roomsSinceHealing===healingRoomInterval){
+   this.roomsSinceHealing=0
+   this.scene.addRoomHealing(35)
+   this.notice(`Healing reward · ${healingRoomInterval} combat rooms cleared`)
   }
   if(kind==='Miniboss'){
    this.gold(economy.minibossGold[this.floor])

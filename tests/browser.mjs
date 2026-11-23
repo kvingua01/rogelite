@@ -709,23 +709,24 @@ try {
   const rewards=[]
   const waveSizes=[]
   g.newRun()
-  const enoughCombat=()=>{
-   while(g.rooms.filter(room=>room.kind==='Combat').length<6)g.beginFloor(g.floor)
-  }
-  enoughCombat()
   const normal=g.rooms.filter(room=>room.kind==='Combat')
   const clearRoom=(room)=>{
    g.enter(room.id,0,0)
-   for(let wave=0;wave<scene.totalWaves;wave++){
-    waveSizes.push(scene.foes.length)
+   for(let wave=0;wave<Math.max(1,scene.totalWaves);wave++){
+    if(scene.totalWaves)waveSizes.push(scene.foes.length)
     for(const foe of scene.foes)scene.damage(foe,10000)
     scene.update(0,16)
    }
    if(room.healingRewards?.length)rewards.push({room,floor:g.floor})
+   if(room.kind==='Miniboss')g.resume()
   }
-  for(const room of normal.slice(0,6))clearRoom(room)
+  for(const room of normal.slice(0,3))clearRoom(room)
+  const countBeforeMiniboss=g.roomsSinceHealing
+  const earlyHeal=rewards.length
+  const miniboss=g.rooms.find(room=>room.kind==='Miniboss')
+  clearRoom(miniboss)
   const first=rewards[0]?.room
-  const countAfterSix=g.roomsSinceHealing
+  const countAfterFour=g.roomsSinceHealing
   g.enter(0,0,0)
   g.enter(first.id,0,0)
   const survivesReentry=scene.drops.includes(first.healingRewards[0])
@@ -740,14 +741,14 @@ try {
    scene.update(0,16)
   }
   const collected=!!transferred&&!scene.drops.includes(transferred)&&g.room.healingRewards.length===0&&g.hp===85
-  enoughCombat()
-  for(const room of g.rooms.filter(room=>room.kind==='Combat').slice(0,6))clearRoom(room)
-  return {rewards:rewards.length,waveSizes,countAfterSix,countAfterReclear,survivesReentry,accessible,collected,final:g.roomsSinceHealing}
+  for(const room of g.rooms.filter(room=>room.kind==='Combat').slice(0,4))clearRoom(room)
+  return {rewards:rewards.length,waveSizes,countBeforeMiniboss,earlyHeal,minibossReward:first===miniboss,countAfterFour,countAfterReclear,survivesReentry,accessible,collected,final:g.roomsSinceHealing}
  })
  assert.equal(healing.rewards,2)
+ assert.deepEqual([healing.countBeforeMiniboss,healing.earlyHeal,healing.minibossReward],[3,0,true])
  assert.ok(healing.waveSizes.every(size=>size===3))
  assert.ok(healing.survivesReentry&&healing.accessible&&healing.collected,JSON.stringify(healing))
- assert.deepEqual([healing.countAfterSix,healing.countAfterReclear,healing.final],[0,0,0])
+ assert.deepEqual([healing.countAfterFour,healing.countAfterReclear,healing.final],[0,0,0])
  assert.deepEqual(errors,[])
  console.log('Chromium smoke test passed')
 } finally {

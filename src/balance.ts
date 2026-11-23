@@ -15,7 +15,7 @@ export const economy = {
 export const goldMultiplierForFloor = (floor:number) => economy.goldRewardMultiplier*(floor===0?2:1)
 
 export const waveSize = 3
-export const healingRoomInterval = 6
+export const healingRoomInterval = 4
 export const regularAttackRate = .75
 export const waveCount = (enemies:number) => Math.max(1,Math.round(enemies/waveSize))
 
