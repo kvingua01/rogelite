@@ -23,7 +23,7 @@ type Point = {x:number;y:number}
 type Volley = {limit:number; spent:Map<Foe,number>; affected:Set<Foe>}
 type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>;volley?:Volley;crescent?:boolean}
 type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number;mini?:Profile;resistUntil:number;guardUntil:number;pursuit:number;abyss?:AbyssProfile;summoned?:boolean}
-type Hazard = Point & {r:number;life:number;damage:number;color:number}
+type Hazard = Point & {r:number;life:number;damage:number;color:number;environmental?:true}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
  slot:0|1; loadout:readonly [Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
@@ -165,7 +165,7 @@ export class Combat extends Phaser.Scene {
   }
   if ((room.kind==='Trap' || (this.locked && (floor>0 || challenge.has('Scorched Ground')))) && !room.cleared) {
    const color=[0xbd7f82,0x9dc67b,0xff9960,0xaa56dd][floor]
-   for(let i=0;i<(room.kind==='Trap'?6:2);i++) this.hazards.push({x:111+i%3*145,y:90+Math.floor(i/3)*110,r:13+(i%3)*3,life:Infinity,damage:floor===3?29:11+floor*2,color})
+   for(let i=0;i<(room.kind==='Trap'?6:2);i++) this.hazards.push({x:111+i%3*145,y:90+Math.floor(i/3)*110,r:13+(i%3)*3,life:Infinity,environmental:true,damage:floor===3?29:11+floor*2,color})
   }
   this.drawRoom()
  }
@@ -787,10 +787,10 @@ export class Combat extends Phaser.Scene {
   } else if(Phaser.Math.Distance.Between(p.x,p.y,shot.x,shot.y)<9) {this.hitPlayer(shot.damage);return false}
   return shot.life>0
  }
- hitPlayer(amount:number) {
+ hitPlayer(amount:number,environmental=false) {
   if(this.elapsed<this.invulnerable||this.bridge.hp<=0) return
   this.invulnerable=this.elapsed+630
-  this.bridge.hurt(amount)
+  this.bridge.hurt(amount*(environmental?1:encounters.enemyDamageMultiplier))
   this.flash(this.player.x,this.player.y,16,0xe57c82)
  }
  renderFX(dt:number) {
@@ -840,7 +840,7 @@ export class Combat extends Phaser.Scene {
   }
   this.shots=this.shots.filter(shot=>this.collision(shot,dt,delta))
   this.hazards=this.hazards.filter(h=>h.life>this.elapsed)
-  for(const h of this.hazards) if(Phaser.Math.Distance.Between(h.x,h.y,this.player.x,this.player.y)<h.r) this.hitPlayer(h.damage)
+  for(const h of this.hazards) if(Phaser.Math.Distance.Between(h.x,h.y,this.player.x,this.player.y)<h.r) this.hitPlayer(h.damage,h.environmental)
   if(b.paused||this.mode!=='run') return
   this.drops=this.drops.filter(d=>{
    if(Phaser.Math.Distance.Between(d.x,d.y,this.player.x,this.player.y)>12||b.hp>=b.maxHP) return true

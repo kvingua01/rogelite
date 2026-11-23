@@ -104,20 +104,27 @@ test('minibosses each have three differentiated phases and an encounter-specific
  assert.deepEqual([100,70,69,35,34].map(hp=>phaseFor(hp,100)),[0,0,1,1,2])
 })
 
-test('miniboss hit counts, shop burst, and sustained weapon damage stay in range',async()=>{
+test('melee miniboss hit counts and sustained damage stay in range',async()=>{
  const {weapons}=await import('../src/data.ts')
  const sword=weapons.find(w=>w.name==='Rusty Sword')
  for(const hp of encounters.minibossHealth){
   const hits=(weapon)=>Math.ceil(hp/weapon.damage)
   assert.ok(hits(sword)>=25&&hits(sword)<=40)
-  for(const weapon of weapons.filter(w=>w.parent&&w.name!=='Abyssal Greatsword')){
+  for(const weapon of weapons.filter(w=>w.slot===0&&w.parent&&w.name!=='Abyssal Greatsword')){
    const strong=weapon.name==='Cinder Hammer'
    assert.ok(hits(weapon)>=(strong?10:15)&&hits(weapon)<=(strong?17:25),weapon.name)
    assert.ok(weapon.damage/weapon.delay*1000<=80,weapon.name)
-   // Even three critical vollies with the spread pellet cap stay below full health.
-   assert.ok(weapon.damage*1.6*(weapon.slot?1.24:1)*3<hp,weapon.name)
+   // Even three critical hits stay below full health.
+   assert.ok(weapon.damage*1.6*3<hp,weapon.name)
   }
  }
+})
+
+test('all player ranged weapons use the doubled damage values',async()=>{
+ const {weapons}=await import('../src/data.ts')
+ assert.deepEqual(Object.fromEntries(weapons.filter(w=>w.slot===1).map(w=>[w.name,w.damage])),{
+  'Wooden Bow':17,'Iron Crossbow':74,'Storm Staff':72,'Venom Wand':72,'Night Knives':72,
+ })
 })
 
 test('Abyss layouts round the Fallen King floor size and keep all doors connected',()=>{

@@ -156,10 +156,10 @@ try {
   const rangedCooldown=ranged.next>scene.elapsed&&scene.shots.length===shots+fired
   const rangedMovedOnCooldown=Math.hypot(ranged.x-location.x,ranged.y-location.y)>0
   g.hp=health;scene.invulnerable=scene.elapsed+1000
-  return {chasing,indicators,immediateDamage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
+  return {chasing,indicators,immediateDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
    upright:melee.sprite.angle===0&&ranged.sprite.angle===0}
  })
- assert.ok(timing?.chasing&&timing.indicators===0&&timing.immediateDamage>=14&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
+ assert.ok(timing?.chasing&&timing.indicators===0&&timing.immediateDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
   timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.upright,JSON.stringify(timing))
  const eliteTiming=await read(g=>{
   const scene=g.scene,player=scene.player

@@ -12,6 +12,7 @@ export const economy = {
 } as const
 
 export const encounters = {
+ enemyDamageMultiplier: .75,
  enemies: [6, 8, 9, 5],
  meleeShare: [.6, .7, .55, .55],
  specialShare: .12,
