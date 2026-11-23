@@ -301,18 +301,33 @@ try {
       const activity=()=>scene.foes.length+scene.shots.length+scene.hazards.length+scene.flashes.length
       const before=activity()
       scene.enemy(foe,.016)
+      if(phase>0){
+       if(foe.miniWarning?.attack!=='phase'||activity()!==before)throw Error('Missing phase warning')
+       scene.elapsed=foe.miniWarning.at
+       scene.enemy(foe,.016)
+      }
       const special=phase===0||activity()>before
       stages.push({current:foe.phase,special})
       const use=scene.useMiniAttack
       let executed
       scene.useMiniAttack=function(foe,attack,aim){executed=attack;return use.call(this,foe,attack,aim)}
       for(const attack of profile.phases[phase]){
-       foe.next=scene.elapsed
+       foe.miniWarning=undefined;foe.next=scene.elapsed
        foe.x=268;foe.y=144
        foe.attacks=profile.phases[phase].indexOf(attack)
        executed=undefined
        scene.enemy(foe,.016)
-       if(executed===attack&&foe.next>scene.elapsed&&foe.strike>scene.elapsed&&foe.sprite.angle===0)attacks.add(attack)
+       const warning=foe.miniWarning
+       if(executed||!warning||warning.at<=scene.elapsed)continue
+       const line=scene.fx.lineBetween,circle=scene.fx.strokeCircle
+       let visible=false
+       scene.fx.lineBetween=function(...args){visible=true;return line.apply(this,args)}
+       scene.fx.strokeCircle=function(...args){visible=true;return circle.apply(this,args)}
+       scene.renderFX(0)
+       scene.fx.lineBetween=line;scene.fx.strokeCircle=circle
+       scene.elapsed=warning.at
+       scene.enemy(foe,.016)
+       if(visible&&executed===attack&&foe.next>scene.elapsed&&foe.strike>scene.elapsed&&foe.sprite.angle===0)attacks.add(attack)
       }
       scene.useMiniAttack=use
      }
