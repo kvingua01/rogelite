@@ -166,9 +166,11 @@ export class Combat extends Phaser.Scene {
    .filter(site=>Math.hypot(site.x-this.player.x,site.y-this.player.y)>=76&&this.arenaOpen(site,13))
    .slice(0,waveSize)
   let specials=0
+  // Neither the regular floor caster nor the Abyssal Sorcerer belongs in combat waves.
+  const kinds=floor===3?[0,1,2,3]:[0,1,2,3,5,6]
   const foes=spawns.map(({x,y},i)=>{
-   const index=offsetForWave+i
-   const foe=this.spawn(x,y,floor===3?(room.patch+index)%5:(floor*2+room.patch+index)%7,
+   const index=(room.patch+offsetForWave+i+(floor===3?0:floor*2))%kinds.length
+   const foe=this.spawn(x,y,kinds[index],
     false,false,floor===3||specials<waveSize-2)
    if(foe.role==='special')specials++
    return foe

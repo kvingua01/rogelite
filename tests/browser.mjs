@@ -186,17 +186,17 @@ try {
   timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.rangedHeldGround&&timing.upright,JSON.stringify(timing))
  const eliteTiming=await read(g=>{
   const scene=g.scene,player=scene.player
-  const elite=scene.spawn(305,145,4)
+  const elite=scene.spawn(305,145,2)
   elite.elite=true;elite.role='special';elite.next=scene.elapsed
   player.setPosition(240,145)
-  const hazards=scene.hazards.length
+  const shots=scene.shots.length
   scene.enemy(elite,.016)
-  const immediate=scene.hazards.length===hazards+1&&elite.next>scene.elapsed&&elite.sprite.angle===0
+  const immediate=scene.shots.length===shots+3&&elite.next>scene.elapsed&&elite.sprite.angle===0
   scene.enemy(elite,.016)
-  const cooledDown=scene.hazards.length===hazards+1
+  const cooledDown=scene.shots.length===shots+3
   elite.sprite.destroy()
   scene.foes.pop()
-  scene.hazards.length=hazards
+  scene.shots.length=shots
   return immediate&&cooledDown
  })
  assert.ok(eliteTiming)
@@ -216,20 +216,23 @@ try {
   const scene=g.scene
   g.enter(g.room.id,1,0)
   g.contract={name:'Blunted Oath',remaining:1}
+  const enemyKinds=scene.foes.map(foe=>foe.kind)
   for(const foe of scene.foes.slice(0,2))scene.damage(foe,10000)
   scene.update(0,16)
   const partial=[scene.wave,scene.foes.length,scene.locked,g.room.cleared,g.roomsSinceHealing,g.contract.remaining]
   scene.damage(scene.foes[0],10000)
   scene.update(0,16)
   const middle=[scene.wave,scene.foes.length,scene.locked,g.room.cleared,g.roomsSinceHealing,g.contract.remaining]
+  enemyKinds.push(...scene.foes.map(foe=>foe.kind))
   const safeSpawn=scene.foes.every(foe=>foe.x>20&&foe.x<492&&foe.y>20&&foe.y<268&&Math.hypot(foe.x-scene.player.x,foe.y-scene.player.y)>=76)
   for(const foe of scene.foes)scene.damage(foe,10000)
   scene.update(0,16)
-  return {partial,middle,safeSpawn,final:[g.room.cleared,scene.locked,g.blessed('Blunted Oath'),g.roomsSinceHealing]}
+  return {partial,middle,safeSpawn,enemyKinds,final:[g.room.cleared,scene.locked,g.blessed('Blunted Oath'),g.roomsSinceHealing]}
  })
  assert.deepEqual(waveProgress.partial,[1,1,true,false,0,1])
  assert.deepEqual(waveProgress.middle,[2,3,true,false,0,1])
  assert.ok(waveProgress.safeSpawn)
+ assert.ok(!waveProgress.enemyKinds.includes(4))
  assert.deepEqual(waveProgress.final,[true,false,true,1])
  await read(g=>{g.scene.player.setPosition(17,144)})
  await page.waitForTimeout(120)
@@ -558,12 +561,13 @@ try {
   const perform=scene.abyssAttack
   let executed
   scene.abyssAttack=function(foe,attack,aim){executed=attack;return perform.call(this,foe,attack,aim)}
-  for(const [index,expected] of abyssEnemies.entries()){
+  for(const [index,expected] of abyssEnemies.slice(0,4).entries()){
    g.enter(room.id,0,0)
    if(!scene.foes.some(f=>f.kind===index)){
     for(const foe of scene.foes)scene.damage(foe,10000)
     scene.update(0,16)
    }
+   if(scene.foes.some(f=>f.kind===4))throw Error('Abyssal Sorcerer spawned in a combat wave')
    const foe=scene.foes.find(f=>f.kind===index)
    scene.player.setPosition(215,141)
    scene.invulnerable=Infinity
@@ -574,7 +578,7 @@ try {
     executed=undefined
     scene.enemy(foe,.016)
     if(executed)throw Error('Melee attack skipped its wait')
-    scene.elapsed+=1000
+    scene.elapsed+=1001
    }
    executed=undefined
    scene.enemy(foe,.016)
@@ -609,7 +613,7 @@ try {
   g.loadout[0]=old
   return {profiles,stages,health:boss.max,damage:boss.damage,crescentHit:boss.hp<before}
  })
- assert.equal(abyssCombat.profiles.length,5)
+ assert.equal(abyssCombat.profiles.length,4)
  assert.equal(abyssCombat.stages.length,4)
  for(const [phase,result] of abyssCombat.stages.entries()){
   assert.equal(result.phase,phase)
