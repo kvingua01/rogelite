@@ -27,7 +27,7 @@ type Hazard = Point & {r:number;life:number;activeAt?:number;damage:number;color
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
  slot:0|1; loadout:readonly [Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
- readonly active?:Relic; charge:number; challenge:Set<string>;
+ readonly activeRelics:readonly Relic[]; relicCharge(relic:Relic):number; setRelicCharge(relic:Relic,amount:number):void; challenge:Set<string>;
  level(name:string):number; relicLevel(name:string):number; switchWeapon():void; curse(name:string):boolean; blessed(name:string):boolean;
  consumeDodgeDraught():boolean; attackPower(damage:number):number; attackDelay(weapon:Weapon):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
  killed(elite:boolean, large:boolean):void; clear():void; enter(id:number, dx:number,dy:number):void; interact():void; sound(frequency:number):void;
@@ -60,7 +60,7 @@ export class Combat extends Phaser.Scene {
  dy=0
  attackQueued=false
  rollQueued=false
- relicQueued=false
+ relicQueued=new Set<0|1>()
  velocity={x:0,y:0}
  hudTimer=0
  locked=false
@@ -133,7 +133,7 @@ export class Combat extends Phaser.Scene {
   this.leaveCastleCamera()
   const { room, floor, challenge }=this.bridge
   this.player.setScale(1).setPosition(dx>0?35:dx<0?W-35:W/2,dy>0?37:dy<0?H-37:H/2).setVisible(true).clearTint()
-  this.attackQueued=false;this.rollQueued=false;this.relicQueued=false
+  this.attackQueued=false;this.rollQueued=false;this.relicQueued.clear()
   this.velocity={x:0,y:0}
   this.rollUntil=0; this.invulnerable=this.elapsed+280
   this.locked=!room.cleared&&['Combat','Miniboss','Boss'].includes(room.kind)
@@ -335,11 +335,11 @@ export class Combat extends Phaser.Scene {
   }
   b.sound(b.slot===0?170:285)
  }
- activate() {
-  const b=this.bridge, relic=b.active
-  if(!relic?.cap||b.charge<relic.cap) return
+ activate(index:0|1=0) {
+  const b=this.bridge, relic=b.activeRelics[index]
+  if(!relic?.cap||b.relicCharge(relic)<relic.cap) return
   const level=b.relicLevel(relic.name)
-  b.charge=0
+  b.setRelicCharge(relic,0)
   const radius=bellRadius
   this.flash(this.player.x,this.player.y,relic.name==='Sun Bell'?radius:90,0xd9b4fc)
   if(relic.name==='Blood Chalice') b.heal(chaliceHeal(level))
@@ -386,8 +386,8 @@ export class Combat extends Phaser.Scene {
   p.setScale(1,this.elapsed<this.rollUntil?.8:x||y?1+Math.sin(this.elapsed/52)*.045:1)
   if((this.attackQueued||this.input.activePointer.leftButtonDown())&&this.elapsed>=this.nextAttack&&this.elapsed>=this.rollUntil) this.attack(aim)
   this.attackQueued=false
-  if(this.relicQueued)this.activate()
-  this.relicQueued=false
+  for(const index of this.relicQueued)this.activate(index)
+  this.relicQueued.clear()
  }
  arenaOpen(point:Point,radius:number){
   return this.pillars.every(p=>Math.hypot(point.x-p.x,point.y-p.y)>=p.r+radius)

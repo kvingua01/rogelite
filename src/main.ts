@@ -81,7 +81,7 @@ class Game implements CombatBridge {
    if(this.scene.mode!=='run') return
    if(event.code==='Tab'&&(this.menu==='map'||!this.paused)) this.menu==='map'?this.resume():this.mapMenu()
    if(!this.paused&&event.code==='Space')this.scene.rollQueued=true
-   if(!this.paused&&event.code==='KeyE')this.scene.relicQueued=true
+   if(!this.paused&&(event.code==='KeyE'||event.code==='KeyF'))this.scene.relicQueued.add(event.code==='KeyE'?0:1)
    if(!this.paused&&event.code==='KeyQ')this.switchWeapon()
    if(event.code==='KeyR'){
     if(this.menu==='relics')this.resume()
@@ -91,16 +91,17 @@ class Game implements CombatBridge {
     if(this.menu==='weapons')this.resume()
     else if(!this.paused||this.menu==='relics')this.weaponInventory()
    }
-   if(!this.paused&&event.code==='KeyF') this.interact()
+   if(!this.paused&&event.code==='KeyG') this.interact()
   })
  }
  ready(){if(this.hasSavedGame)this.castle()}
  persist(){try {localStorage.setItem(saveKey,JSON.stringify(this.save));this.hasSavedGame=true} catch {this.notice('Browser storage is unavailable')}}
  level(name:string){return this.save.upgrades[name]??0}
  relicLevel(name:string){return this.equipped.some(relic=>relic?.name===name)?this.levels.get(name)??0:0}
- get active(){return this.equipped.find(relic=>relic?.charge)??undefined}
- get charge(){const relic=this.active;return relic?this.activeCharges.get(relic.name)??relic.cap??0:0}
- set charge(amount:number){if(this.active)this.activeCharges.set(this.active.name,amount)}
+ get activeRelics(){return this.equipped.filter((relic):relic is Relic=>!!relic?.charge)}
+ relicCharge(relic:Relic){return this.activeCharges.get(relic.name)??relic.cap??0}
+ setRelicCharge(relic:Relic,amount:number){this.activeCharges.set(relic.name,amount)}
+ relicKey(relic:Relic){return ['E','F'][this.activeRelics.indexOf(relic)]??''}
  switchWeapon(){
   this.slot=this.slot===0?1:0
   this.refresh()
@@ -149,7 +150,9 @@ class Game implements CombatBridge {
  }
  attackPower(damage:number){return damage*(1+this.level(this.slot?'Marksmanship':'Swordcraft')*.12+this.statsBonus)*(this.curse('Blunted Oath')?.7:1)*(this.blessed('Blunted Oath')?1.3:1)*(Math.random()<.05+this.level('Precision')*.05?1.6:1)}
  gainCharge(type:string,amount:number){
-  if(this.active?.charge===type&&this.active.cap) this.charge=Math.min(this.active.cap,this.charge+amount)
+  for(const relic of this.activeRelics){
+   if(relic.charge===type&&relic.cap)this.setRelicCharge(relic,Math.min(relic.cap,this.relicCharge(relic)+amount))
+  }
  }
  killed(elite:boolean,large:boolean){
   if(large)return
@@ -166,13 +169,13 @@ class Game implements CombatBridge {
   }
   this.levels.set(relic.name,relicLevel(level))
   const empty=this.equipped.indexOf(null)
-  if(level===0&&empty>=0&&(!relic.charge||!this.active))this.equipRelic(relic,empty)
+  if(level===0&&empty>=0&&(!relic.charge||this.activeRelics.length<2))this.equipRelic(relic,empty)
   this.notice(relic.name+' · '+numerals[level+1]+(this.relicLevel(relic.name)?'':' · In inventory'))
   done()
  }
  equipRelic(relic:Relic,index:number){
   if(!this.levels.has(relic.name)||index<0||index>=relicSlotCount||this.relicLevel(relic.name))return
-  if(relic.charge&&this.active&&this.equipped[index]!==this.active)return
+  if(relic.charge&&this.activeRelics.length>=2&&!this.equipped[index]?.charge)return
   this.equipped[index]=relic
   this.refresh()
  }
@@ -256,7 +259,7 @@ class Game implements CombatBridge {
    this.persist()
    const finish=()=>this.floor===3?this.finish(true):this.floor===2?this.openAbyss():this.beginFloor(this.floor+1)
    const first=this.randomRelic(true)
-   const loot=shuffled(relics.filter(r=>r!==first&&r.name!==this.active?.name))
+   const loot=shuffled(relics.filter(r=>r!==first&&!this.activeRelics.includes(r)))
    const choices=[first,...loot.filter(r=>r.rank<=this.floor+1),...loot.filter(r=>r.rank>this.floor+1)].slice(0,3)
    this.mandatory=true
    this.dialog('Main boss defeated',this.scene.bossName,`+1 ${material}. Choose one relic. ${discovery}`,
@@ -520,7 +523,7 @@ class Game implements CombatBridge {
   return ()=>this.castle()
  }
  settings(back:Handler){
-  this.dialog('Settings','Controls','Castle: WASD walk, E interact · Dungeon: WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E use active relic · F interact · I equipped weapons · R relic inventory · Tab map · Esc pause',[
+  this.dialog('Settings','Controls','Castle: WASD walk, E interact · Dungeon: WASD move · Mouse aim · Left-click attack · Q or wheel switch weapons · Space dodge · E / F use active relics · G interact · I equipped weapons · R relic inventory · Tab map · Esc pause',[
    {title:this.save.mute?'Enable sound':'Mute sound',action:()=>{this.save.mute=!this.save.mute;this.persist();this.settings(back)}},
    {title:'Back',action:back},
   ])
@@ -558,9 +561,9 @@ class Game implements CombatBridge {
   row.className='relic-slots'
   this.equipped.forEach((relic,index)=>{
    const button=document.createElement('button')
-   button.textContent=(index+1)+' · '+(relic?icon(relic)+' '+relic.name+' '+numerals[this.relicLevel(relic.name)]:'Empty')
+   button.textContent=(index+1)+' · '+(relic?icon(relic)+' '+relic.name+' '+numerals[this.relicLevel(relic.name)]+(relic.charge?' · '+this.relicKey(relic):''):'Empty')
    if(relic)button.style.color=colors[relic.rank]
-   button.disabled=selected?!!selected.charge&&!!this.active&&relic!==this.active:!relic
+   button.disabled=selected?!!selected.charge&&this.activeRelics.length>=2&&!relic?.charge:!relic
    button.title=selected?'Equip '+selected.name+' in slot '+(index+1):'Unequip '+(relic?.name??'')
    button.onclick=()=>{
     if(selected)this.equipRelic(selected,index)
@@ -576,7 +579,7 @@ class Game implements CombatBridge {
    slots.append(preview)
   }
   const owned=relics.filter(r=>this.levels.has(r.name))
-  this.dialog('Run inventory','Relic equipment',owned.length?'Choose a relic to equip it. Select an equipped slot to unequip it.':'No relics collected this run. After the first fight, try the north or south door for the treasure room. Stand near the chest and press F to open it, then claim the guaranteed relic. Minibosses and main bosses also offer relics.',[
+  this.dialog('Run inventory','Relic equipment',owned.length?'Equip up to two active relics. E and F activate them in slot order. Select an equipped slot to unequip its relic.':'No relics collected this run. After the first fight, try the north or south door for the treasure room. Stand near the chest and press G to open it, then claim the guaranteed relic. Minibosses and main bosses also offer relics.',[
    ...owned.map(r=>{
     const level=this.levels.get(r.name)!
     const equipped=this.relicLevel(r.name)>0
@@ -614,17 +617,17 @@ class Game implements CombatBridge {
   const boss=this.scene.foes.find(f=>f.large&&f.hp>0)
   const area=floors[this.floor]
   const treasure=this.room.neighbors.map(id=>this.rooms[id]).find(room=>room.kind==='Treasure'&&!room.used)
-  const hint=this.room.portal?'F · Abyssal portal':this.room.kind==='Treasure'&&!this.room.used?'F · Open chest for a guaranteed relic'
+  const hint=this.room.portal?'G · Abyssal portal':this.room.kind==='Treasure'&&!this.room.used?'G · Open chest for a guaranteed relic'
    : !this.levels.size&&this.room.kind==='Entry'?'Find your first relic in the treasure room after the first fight'
    : !this.levels.size&&treasure&&!this.scene.locked?'Treasure chest '+(treasure.y<this.room.y?'north':'south')+' · Guaranteed relic'
-   : !this.room.used&&['Shop','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
+   : !this.room.used&&['Shop','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'G · '+this.room.kind:''
   const toast=performance.now()<this.toastTimer?this.toast:''
   hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${this.floor===3?area.name:area.biomes[this.room.patch]}</div>${this.scene.locked&&this.scene.totalWaves?`<div>Wave ${this.scene.wave} / ${this.scene.totalWaves}</div>`:''}${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
    ${boss?`<div class="boss ${boss.mini||this.floor===3?'miniboss-bar':''}">${this.scene.bossName}${boss.mini||this.floor===3?' · Phase '+(boss.phase+1)+(this.floor===3?' / 4':''):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
    <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Starter weapon'}">${i===0?'⚔':'➶'} ${w.name}</span>`).join('')}</div>
-   <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · 100% power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
+   <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · 100% power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · ${this.relicKey(relic)}<div class="charge" title="${pct(this.relicCharge(relic)/relic.cap)} charged">${bar(this.relicCharge(relic)/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
  }
 }
 export const game=new Game()
