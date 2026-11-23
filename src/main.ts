@@ -4,7 +4,7 @@ import { H, W } from './art'
 import { challenges, colors, contracts, contractClear, decode, rarity, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
 import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
-import { economy, goldMultiplierForFloor, healingRoomInterval, relicPower, relicSlotCount } from './balance'
+import { economy, goldMultiplierForFloor, healingRoomInterval, relicSlotCount } from './balance'
 import { type Building } from './castle'
 import { abyssalWeapon, bossMaterials, emptyBossMaterials, hasRecipeMaterials, payRecipe, recipeCost, recipes } from './materials'
 import './style.css'
@@ -98,7 +98,6 @@ class Game implements CombatBridge {
  persist(){try {localStorage.setItem(saveKey,JSON.stringify(this.save));this.hasSavedGame=true} catch {this.notice('Browser storage is unavailable')}}
  level(name:string){return this.save.upgrades[name]??0}
  relicLevel(name:string){return this.equipped.some(relic=>relic?.name===name)?this.levels.get(name)??0:0}
- get power(){return relicPower(this.equipped.filter(Boolean).length)}
  get active(){return this.equipped.find(relic=>relic?.charge)??undefined}
  get charge(){const relic=this.active;return relic?this.activeCharges.get(relic.name)??relic.cap??0:0}
  set charge(amount:number){if(this.active)this.activeCharges.set(this.active.name,amount)}
@@ -143,6 +142,10 @@ class Game implements CombatBridge {
   this.dodgeDraughts--
   this.notice('Dodge draught consumed')
   return true
+ }
+ attackDelay(weapon:Weapon){
+  const rank=this.level(weapon.slot===0?'Melee Attack Speed':'Ranged Attack Speed')
+  return weapon.delay/(1+rank*.1)
  }
  attackPower(damage:number){return damage*(1+this.level(this.slot?'Marksmanship':'Swordcraft')*.12+this.statsBonus)*(this.curse('Blunted Oath')?.7:1)*(this.blessed('Blunted Oath')?1.3:1)*(Math.random()<.05+this.level('Precision')*.05?1.6:1)}
  gainCharge(type:string,amount:number){
@@ -274,7 +277,7 @@ class Game implements CombatBridge {
  relicChoice(relic:Relic,done:Handler):Choice{
   return {title:relic.name,detail:rarity[relic.rank]+' · '+relic.detail,action:()=>this.addRelic(relic,done)}
  }
- weaponStats(w:Weapon){return `${w.damage} damage · ${(w.delay/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}${w.name===abyssalWeapon?' · Every fourth swing releases a piercing void crescent':''}`}
+ weaponStats(w:Weapon){return `${w.damage} damage · ${(this.attackDelay(w)/1000).toFixed(2)} s · ${w.range} range${w.effect?' · '+w.effect:''}${w.name===abyssalWeapon?' · Every fourth swing releases a piercing void crescent':''}`}
  interact(){
   const {room}=this
   if(Phaser.Math.Distance.Between(this.scene.player.x,this.scene.player.y,W/2,H/2)>42)return
@@ -546,7 +549,7 @@ class Game implements CombatBridge {
   slots.className='relic-equipment'
   const title=document.createElement('p')
   const count=this.equipped.filter(Boolean).length
-  title.textContent=count+' / '+relicSlotCount+' equipped · '+pct(this.power)+' power'
+  title.textContent=count+' / '+relicSlotCount+' equipped · 100% power'
   slots.append(title)
   const row=document.createElement('div')
   row.className='relic-slots'
@@ -556,12 +559,6 @@ class Game implements CombatBridge {
    if(relic)button.style.color=colors[relic.rank]
    button.disabled=selected?!!selected.charge&&!!this.active&&relic!==this.active:!relic
    button.title=selected?'Equip '+selected.name+' in slot '+(index+1):'Unequip '+(relic?.name??'')
-   if(selected&&!button.disabled){
-    const resultingPower=relicPower(count+(relic?0:1))
-    const result=document.createElement('small')
-    result.textContent=pct(resultingPower)+' power'
-    button.append(document.createElement('br'),result)
-   }
    button.onclick=()=>{
     if(selected)this.equipRelic(selected,index)
     else {this.equipped[index]=null;this.refresh()}
@@ -580,9 +577,7 @@ class Game implements CombatBridge {
    ...owned.map(r=>{
     const level=this.levels.get(r.name)!
     const equipped=this.relicLevel(r.name)>0
-    const effect=equipped
-     ? relicEffect(r,level,this.power)
-     : 'At '+pct(this.power)+': '+relicEffect(r,level,this.power)
+    const effect=relicEffect(r,level)
     return {title:icon(r)+' '+r.name+' '+numerals[level],detail:rarity[r.rank]+' · '+(equipped?'Equipped':'In inventory')+' · '+r.detail+' '+effect,action:()=>{
      if(equipped){this.equipped[this.equipped.indexOf(r)]=null;this.refresh();this.inventory()}
      else this.inventory(r)
@@ -626,7 +621,7 @@ class Game implements CombatBridge {
    ${boss?`<div class="boss ${boss.mini||this.floor===3?'miniboss-bar':''}">${this.scene.bossName}${boss.mini||this.floor===3?' · Phase '+(boss.phase+1)+(this.floor===3?' / 4':''):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
    <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Starter weapon'}">${i===0?'⚔':'➶'} ${w.name}</span>`).join('')}</div>
-   <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
+   <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · 100% power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
  }
 }
 export const game=new Game()

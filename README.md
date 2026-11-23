@@ -37,7 +37,7 @@ New saves start with the Rusty Sword and Wooden Bow. Existing saves keep their e
 
 Discover blueprints during runs and spend gold and materials at the castle Blacksmith to unlock weapons permanently. Equip one melee weapon and, after training, one ranged weapon before entering the dungeon. Press I during a run to view your locked loadout. Dungeon shops sell provisions.
 
-You start each run without relics. A treasure room branches off the first combat room on every floor. Stand by the chest and press F, then claim its guaranteed relic. Equip up to three through the relic inventory, including at most one active relic. One equipped relic runs at 100% power, two at 80% each, and three at 60% each.
+You start each run without relics. A treasure room branches off the first combat room on every floor. Stand by the chest and press F, then claim its guaranteed relic. Equip up to three through the relic inventory, including at most one active relic. All equipped relics run at 100% power. The Training Grounds offer separate melee and ranged attack-speed upgrades.
 
 Permanent progress is stored in localStorage for the current browser and origin. Refreshing during a run returns to the castle with any permanent progress earned so far.
 

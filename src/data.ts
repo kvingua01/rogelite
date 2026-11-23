@@ -37,6 +37,8 @@ export const upgrades = [
  {name:'Vitality',building:'Training Grounds',detail:'+15 maximum HP',cost:110,max:4,requires:''},
  {name:'Swordcraft',building:'Training Grounds',detail:'+12% melee damage',cost:155,max:3,requires:'Vitality'},
  {name:'Marksmanship',building:'Training Grounds',detail:'+12% projectile damage',cost:155,max:3,requires:''},
+ {name:'Melee Attack Speed',building:'Training Grounds',detail:'+10% melee attack rate per level',cost:120,max:3,requires:''},
+ {name:'Ranged Attack Speed',building:'Training Grounds',detail:'+10% ranged attack rate per level',cost:120,max:3,requires:''},
  {name:'Precision',building:'Training Grounds',detail:'+5% critical hit chance',cost:245,max:3,requires:'Swordcraft'},
  {name:'Forge',building:'Blacksmith',detail:'Unlock advanced crafting recipes',cost:245,max:1,requires:''},
  {name:'Herbalism',building:'Alchemist',detail:'+20% pickup and potion healing',cost:115,max:3,requires:''},

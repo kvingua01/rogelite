@@ -38,7 +38,6 @@ export const encounters = {
 } as const
 
 export const relicSlotCount = 3
-export const relicPower = (equipped: number) => [1, 1, .8, .6][equipped]
 
 export const enemyTiming = {
  meleeCooldown: 575,

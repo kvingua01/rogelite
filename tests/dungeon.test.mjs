@@ -2,7 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {generate, generateAbyss, floors} from '../src/dungeon.ts'
 import {contractClear, decode, fresh, relicLevel, upgradeCost, upgrades} from '../src/data.ts'
-import {economy, encounters, relicPower, goldMultiplierForFloor, waveCount, waveSize} from '../src/balance.ts'
+import {economy, encounters, goldMultiplierForFloor, waveCount, waveSize} from '../src/balance.ts'
 
 test('300 layouts contain every room type and connect every patch to its miniboss',()=>{
  const types=['Entry','Combat','Treasure','Shop','Curse Altar','Secret','Trap','Miniboss','Boss','Event','Blacksmith']
@@ -65,9 +65,6 @@ test('fresh and melee-only legacy saves get a free Wooden Bow',()=>{
  assert.deepEqual(migrated.loadout,save.loadout)
  assert.deepEqual(migrated.unlocked,save.unlocked)
  assert.equal(migrated.gold,43)
-})
-test('relic power applies evenly to the entire loadout',()=>{
- assert.deepEqual([1,2,3].map(count=>20*relicPower(count)),[20,16,12])
 })
 test('procedural floor gold estimates stay inside the economy targets',()=>{
  const layouts=Array.from({length:500},(_,seed)=>{

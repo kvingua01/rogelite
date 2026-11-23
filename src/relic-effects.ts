@@ -13,21 +13,21 @@ export const bellRadius = 140
 export const bellHeal = 12
 export const mirrorRange = (level:number) => level*45
 
-export function relicEffect(relic:Relic,level:number,power:number) {
- const scaled=(value:number)=>Math.round(value*power*100)/100
- const seconds=(ms:number)=>scaled(ms/1000)+' s'
+export function relicEffect(relic:Relic,level:number) {
+ const rounded=(value:number)=>Math.round(value*100)/100
+ const seconds=(ms:number)=>rounded(ms/1000)+' s'
  switch(relic.name){
-  case 'Cinder Heart': return `Burn for ${seconds(dotDuration(level))} at ${scaled(dotRate(level)*100)}% of hit damage per second.${level===3?' Nearby foes take '+scaled(35)+'% splash damage.':''}`
-  case 'Bog Idol': return `Poison for ${seconds(dotDuration(level))} at ${scaled(dotRate(level)*100)}% of hit damage per second.${level===3?' Also slows foes.':''}`
-  case 'Rime Seal': return `Slow enemies by ${scaled(48)}% for ${seconds(frostDuration(level))}.${level===3?' Attack damage +'+scaled(100*rimeDamage)+'%.':''}`
-  case 'Forked Bolt': return `Add ${level>=2?2:1} extra bolts at ${scaled(78)}% damage and chain for ${scaled(28)}% damage.${level===3?' Bolts pierce.':''}`
+  case 'Cinder Heart': return `Burn for ${seconds(dotDuration(level))} at ${rounded(dotRate(level)*100)}% of hit damage per second.${level===3?' Nearby foes take '+rounded(35)+'% splash damage.':''}`
+  case 'Bog Idol': return `Poison for ${seconds(dotDuration(level))} at ${rounded(dotRate(level)*100)}% of hit damage per second.${level===3?' Also slows foes.':''}`
+  case 'Rime Seal': return `Slow enemies by ${rounded(48)}% for ${seconds(frostDuration(level))}.${level===3?' Attack damage +'+rounded(100*rimeDamage)+'%.':''}`
+  case 'Forked Bolt': return `Add ${level>=2?2:1} extra bolts at ${rounded(78)}% damage and chain for ${rounded(28)}% damage.${level===3?' Bolts pierce.':''}`
   case 'Glass Compass': return level===3?'Reveals the entire floor.':level===2?'Reveals secrets, treasure, and adjacent paths.':'Reveals secret rooms.'
-  case 'Mirror Quiver': return `Bolts bounce and gain ${scaled(mirrorRange(level))} range.${level===3?' Bolts home in on enemies.':''}`
-  case 'Dusk Crown': return `Attack damage +${scaled(100*shadowDamage(level))}%.${level===3?' Restore '+scaled(duskHeal)+' HP per kill.':''}`
-  case 'Sun Bell': return `Shockwave deals ${scaled(activeDamage(level))} damage within ${scaled(bellRadius)} range.${level===3?' Restore '+scaled(bellHeal)+' HP.':''}`
-  case 'Blood Chalice': return `Restore ${scaled(chaliceHeal(level))} HP.${level===3?' Invulnerable for '+seconds(wardDuration(level))+'.':''}`
-  case 'Thunder Rune': return `Deal ${scaled(activeDamage(level))} damage to each foe.${level===3?' Also slows foes.':''}`
-  case 'Grave Lantern': return `Invulnerable for ${seconds(wardDuration(level))}.${level===3?' Deal '+scaled(activeDamage(level))+' damage to each foe.':''}`
+  case 'Mirror Quiver': return `Bolts bounce and gain ${rounded(mirrorRange(level))} range.${level===3?' Bolts home in on enemies.':''}`
+  case 'Dusk Crown': return `Attack damage +${rounded(100*shadowDamage(level))}%.${level===3?' Restore '+rounded(duskHeal)+' HP per kill.':''}`
+  case 'Sun Bell': return `Shockwave deals ${rounded(activeDamage(level))} damage within ${rounded(bellRadius)} range.${level===3?' Restore '+rounded(bellHeal)+' HP.':''}`
+  case 'Blood Chalice': return `Restore ${rounded(chaliceHeal(level))} HP.${level===3?' Invulnerable for '+seconds(wardDuration(level))+'.':''}`
+  case 'Thunder Rune': return `Deal ${rounded(activeDamage(level))} damage to each foe.${level===3?' Also slows foes.':''}`
+  case 'Grave Lantern': return `Invulnerable for ${seconds(wardDuration(level))}.${level===3?' Deal '+rounded(activeDamage(level))+' damage to each foe.':''}`
   default: return ''
  }
 }

@@ -27,9 +27,9 @@ type Hazard = Point & {r:number;life:number;activeAt?:number;damage:number;color
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
  slot:0|1; loadout:readonly [Weapon,Weapon|null]; paused:boolean; floor:number; room:Room; rooms:Room[]; hp:number; maxHP:number;
- readonly active?:Relic; charge:number; readonly power:number; challenge:Set<string>;
+ readonly active?:Relic; charge:number; challenge:Set<string>;
  level(name:string):number; relicLevel(name:string):number; switchWeapon():void; curse(name:string):boolean; blessed(name:string):boolean;
- consumeDodgeDraught():boolean; attackPower(damage:number):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
+ consumeDodgeDraught():boolean; attackPower(damage:number):number; attackDelay(weapon:Weapon):number; hurt(damage:number):void; heal(amount:number):void; gainCharge(type:string, amount:number):void;
  killed(elite:boolean, large:boolean):void; clear():void; enter(id:number, dx:number,dy:number):void; interact():void; sound(frequency:number):void;
  refresh():void; ready():void; castleStatus():void;
 }
@@ -266,7 +266,7 @@ export class Combat extends Phaser.Scene {
   for(const effect of ['fire','poison'] as const){
    const strength=effects[effect]
    if(!strength)continue
-   const level=b.relicLevel(relicElements[effect])*(strength===1?b.power:1)
+   const level=b.relicLevel(relicElements[effect])
    const dot=amount*dotRate(level)*strength
    if(foe.burn<=this.elapsed||dot>=foe.dot){
     foe.burn=this.elapsed+dotDuration(level)*strength
@@ -275,7 +275,7 @@ export class Combat extends Phaser.Scene {
   }
   const slow=effects.frost??(b.relicLevel('Bog Idol')===3?effects.poison:0)
   if(slow){
-   foe.slow=this.elapsed+frostDuration(b.relicLevel('Rime Seal')*(slow===1?b.power:1))*slow
+   foe.slow=this.elapsed+frostDuration(b.relicLevel('Rime Seal'))*slow
    foe.slowPower=.48*slow
   }
   const lightning=effects.lightning
@@ -289,7 +289,7 @@ export class Combat extends Phaser.Scene {
   const grantsLoot=!(foe.abyss&&foe.summoned)
   if(grantsLoot)b.killed(foe.elite,foe.large)
   b.gainCharge('kills',1)
-  if(grantsLoot&&b.relicLevel('Dusk Crown')===3) b.heal(duskHeal*b.power)
+  if(grantsLoot&&b.relicLevel('Dusk Crown')===3) b.heal(duskHeal)
   if(grantsLoot&&!foe.large&&Math.random()<encounters.healChance) this.drops.push({x:foe.x,y:foe.y,amount:Math.random()<encounters.largeHealChance?35:15})
  }
  projectile(x:number,y:number,angle:number,speed:number,range:number,damage:number,friendly:boolean,effects:Effects={},pierce=0,bounce=0,home=0,volley?:Volley) {
@@ -301,17 +301,17 @@ export class Combat extends Phaser.Scene {
  attack(angle:number) {
   const b=this.bridge, weapon=b.loadout[b.slot],p=this.player
   if(!weapon)return
-  this.nextAttack=this.elapsed+weapon.delay
+  this.nextAttack=this.elapsed+b.attackDelay(weapon)
   const elements:Effects={}
-  for(const effect of Object.keys(relicElements) as Effect[]) if(b.relicLevel(relicElements[effect]))elements[effect]=b.power
+  for(const effect of Object.keys(relicElements) as Effect[]) if(b.relicLevel(relicElements[effect]))elements[effect]=1
   if(weapon.effect)elements[weapon.effect]=1
   const synergies=weaponRelicSynergies.filter(rule=>
    (!rule.weapon||rule.weapon===weapon.name)&&(!rule.relic||b.relicLevel(rule.relic)>=rule.level)&&(!rule.contract||b.blessed(rule.contract)))
   const combo=(result:string)=>synergies.find(rule=>rule.result===result)
-  const amount=b.attackPower(weapon.damage)*(1+(b.relicLevel('Rime Seal')===3?rimeDamage*b.power:0))*(1+shadowDamage(b.relicLevel('Dusk Crown'))*b.power)
+  const amount=b.attackPower(weapon.damage)*(1+(b.relicLevel('Rime Seal')===3?rimeDamage:0))*(1+shadowDamage(b.relicLevel('Dusk Crown')))
   if(b.slot===0) {
    const burst=combo('blast')
-   const range=weapon.range+(burst?15*(burst.relic?b.power:1):0)
+   const range=weapon.range+(burst?15:0)
    this.flash(p.x,p.y,range,burst?effectColor.fire:0xf6d5a5,angle)
    const targets=new Set(this.foes.filter(foe=>{
     const distance=Phaser.Math.Distance.Between(p.x,p.y,foe.x,foe.y)
@@ -327,28 +327,28 @@ export class Combat extends Phaser.Scene {
   } else {
    const forks=b.relicLevel('Forked Bolt')
    const mirror=b.relicLevel('Mirror Quiver')
-   const pierce=Math.round(((forks===3?2:0)+(combo('pierce')?2:0))*b.power)+(b.blessed('Broken Shield')&&elements.shadow?2:0)
-   const volley:Volley={limit:amount*(1+.24*b.power),spent:new Map(),affected:new Set()}
-   this.projectile(p.x,p.y,angle,225,weapon.range+mirrorRange(mirror)*b.power,amount,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0,volley)
+   const pierce=(forks===3?2:0)+(combo('pierce')?2:0)+(b.blessed('Broken Shield')&&elements.shadow?2:0)
+   const volley:Volley={limit:amount*1.24,spent:new Map(),affected:new Set()}
+   this.projectile(p.x,p.y,angle,225,weapon.range+mirrorRange(mirror),amount,true,elements,pierce,mirror?2:0,mirror===3?1:0,volley)
    const spread=combo('split')?[-.34,-.17,.17,.34]:forks>=2?[-.2,.2]:forks===1?[.17]:[]
-   for(const offset of spread) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirrorRange(mirror)*b.power,amount*.78*b.power,true,elements,pierce,mirror?Math.round(2*b.power):0,mirror===3?b.power:0,volley)
+   for(const offset of spread) this.projectile(p.x,p.y,angle+offset,225,weapon.range+mirrorRange(mirror),amount*.78,true,elements,pierce,mirror?2:0,mirror===3?1:0,volley)
   }
   b.sound(b.slot===0?170:285)
  }
  activate() {
   const b=this.bridge, relic=b.active
   if(!relic?.cap||b.charge<relic.cap) return
-  const level=b.relicLevel(relic.name),power=b.power
+  const level=b.relicLevel(relic.name)
   b.charge=0
-  const radius=bellRadius*power
+  const radius=bellRadius
   this.flash(this.player.x,this.player.y,relic.name==='Sun Bell'?radius:90,0xd9b4fc)
-  if(relic.name==='Blood Chalice') b.heal(chaliceHeal(level)*power)
-  if(relic.name==='Grave Lantern'||(relic.name==='Blood Chalice'&&level===3)) this.invulnerable=Math.max(this.invulnerable,this.elapsed+wardDuration(level)*power)
+  if(relic.name==='Blood Chalice') b.heal(chaliceHeal(level))
+  if(relic.name==='Grave Lantern'||(relic.name==='Blood Chalice'&&level===3)) this.invulnerable=Math.max(this.invulnerable,this.elapsed+wardDuration(level))
   if(relic.name==='Sun Bell'||relic.name==='Thunder Rune'||(relic.name==='Grave Lantern'&&level===3)) for(const foe of this.foes) {
-   const effects:Effects=relic.name==='Thunder Rune'?(level===3?{lightning:1,frost:power}:{lightning:1}):{fire:power}
-   if(relic.name!=='Sun Bell'||Phaser.Math.Distance.Between(foe.x,foe.y,this.player.x,this.player.y)<radius) this.damage(foe,activeDamage(level)*power,effects)
+   const effects:Effects=relic.name==='Thunder Rune'?(level===3?{lightning:1,frost:1}:{lightning:1}):{fire:1}
+   if(relic.name!=='Sun Bell'||Phaser.Math.Distance.Between(foe.x,foe.y,this.player.x,this.player.y)<radius) this.damage(foe,activeDamage(level),effects)
   }
-  if(relic.name==='Sun Bell'&&level===3) b.heal(bellHeal*power)
+  if(relic.name==='Sun Bell'&&level===3) b.heal(bellHeal)
   b.sound(500)
  }
  move(delta:number) {
@@ -846,9 +846,9 @@ export class Combat extends Phaser.Scene {
     affected.add(foe)
     if(damage>0)this.damage(foe,damage,spent?{}:shot.effects,affected)
     if(!spent&&shot.effects.fire&&this.bridge.relicLevel('Cinder Heart')===3) for(const target of this.foes){
-     if(target.hp<=0||affected.has(target)||Math.hypot(target.x-foe.x,target.y-foe.y)>=30*this.bridge.power)continue
+     if(target.hp<=0||affected.has(target)||Math.hypot(target.x-foe.x,target.y-foe.y)>=30)continue
      affected.add(target)
-     this.damage(target,damage*.35*this.bridge.power,{fire:this.bridge.power})
+     this.damage(target,damage*.35,{fire:1})
     }
     if(shot.pierce--<=0) return false
    }

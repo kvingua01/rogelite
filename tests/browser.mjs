@@ -296,14 +296,14 @@ try {
   g.resetRelics()
   for(const name of ['Blood Chalice','Cinder Heart','Rime Seal','Glass Compass','Sun Bell'])g.addRelic(relics.find(r=>r.name===name),()=>{})
  })
- assert.deepEqual(await read(g=>[g.levels.size,g.equipped.filter(Boolean).length,g.power,g.active.name]),[5,3,.6,'Blood Chalice'])
+ assert.deepEqual(await read(g=>[g.levels.size,g.equipped.filter(Boolean).length,g.active.name]),[5,3,'Blood Chalice'])
  assert.equal(await page.locator('.hud-relic').count(),3)
  await page.keyboard.press('KeyR')
  await page.getByRole('heading',{name:'Relic equipment'}).waitFor()
  assert.ok(await read(g=>g.paused))
- assert.match(await page.locator('.relic-equipment').innerText(),/60% power/)
+ assert.match(await page.locator('.relic-equipment').innerText(),/100% power/)
  await page.getByTitle('Unequip Rime Seal',{exact:true}).click()
- assert.match(await page.locator('.relic-equipment').innerText(),/80% power/)
+ assert.match(await page.locator('.relic-equipment').innerText(),/100% power/)
  await page.getByTitle('Unequip Cinder Heart',{exact:true}).click()
  assert.match(await page.locator('.relic-equipment').innerText(),/100% power/)
  await page.getByRole('button',{name:/Sun Bell/}).click()
@@ -320,7 +320,7 @@ try {
  })
  await page.keyboard.press('KeyE')
  await page.waitForFunction(async()=>{const{game}=await import('/src/main.ts');return game.charge===0})
- assert.ok(Math.abs(await read(g=>g.hp)-67.4)<.01)
+ assert.ok(Math.abs(await read(g=>g.hp)-79)<.01)
  await read(g=>{g.gold(600);g.save.blueprints.push('Grave Axe');g.persist()})
 
  const miniReport=await read(async g=>{
@@ -534,6 +534,8 @@ try {
  assert.equal(await annex(),false)
  await page.keyboard.press('Escape')
  await atStation('Training Grounds')
+ await page.getByRole('button',{name:/^Melee Attack Speed 0/}).click()
+ await page.getByRole('button',{name:/^Ranged Attack Speed 0/}).click()
  await page.getByRole('button',{name:/^Vitality 0/}).click()
  await page.reload()
  await page.getByText('The Last Keep',{exact:true}).waitFor()
@@ -544,6 +546,17 @@ try {
  await page.getByText('Swift Foes',{exact:true}).waitFor()
  await page.getByRole('button',{name:/Begin descent/}).click()
  assert.deepEqual(await read(g=>g.loadout.map(w=>w?.name)),['Grave Axe','Wooden Bow'])
+ const attackDelays=await read(g=>{
+  const scene=g.scene,delays=[]
+  for(const slot of [0,1]){
+   g.slot=slot
+   scene.attack(0)
+   delays.push((scene.nextAttack-scene.elapsed)/g.loadout[slot].delay)
+  }
+  return delays
+ })
+ assert.ok(attackDelays.every(delay=>Math.abs(delay-1/1.1)<.001))
+
  const balances=await read(g=>[g.save.gold,g.save.materials])
  await read(g=>g.hurt(9999))
  await page.getByText('Fallen in battle',{exact:true}).waitFor()
