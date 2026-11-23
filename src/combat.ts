@@ -469,20 +469,20 @@ export class Combat extends Phaser.Scene {
     this.miniStrike(foe,angle,43,1.18)
     break
    case 'combo':
-    this.arenaStep(foe,angle,30,foe.radius)
+    if(foe.large)this.arenaStep(foe,angle,30,foe.radius)
     this.miniStrike(foe,angle,45,1.22)
     this.queue(foe,220,()=>{
-     this.arenaStep(foe,angle,25,foe.radius)
+     if(foe.large)this.arenaStep(foe,angle,25,foe.radius)
      this.miniStrike(foe,angle,49,1.45)
     })
     break
    case 'spin':
-    this.arenaStep(foe,angle,24,foe.radius)
+    if(foe.large)this.arenaStep(foe,angle,24,foe.radius)
     this.miniStrike(foe,angle,55,Math.PI)
     if(phase>0)this.queue(foe,190,()=>this.miniFire(foe,angle,8,Math.PI/4))
     break
    case 'slam':
-    this.arenaStep(foe,angle,38,foe.radius)
+    if(foe.large)this.arenaStep(foe,angle,38,foe.radius)
     this.miniStrike(foe,angle,57,Math.PI)
     if(this.bridge.hp>0)this.miniFire(foe,angle,phase===2?12:9,Math.PI*2/(phase===2?12:9))
     break
@@ -615,16 +615,17 @@ export class Combat extends Phaser.Scene {
   })
  }
  abyssAttack(foe:Foe,attack:AbyssAttack,aim:Point){
-  if(attack==='lunge'||attack==='combo'||attack==='spin'||attack==='slam'||attack==='cataclysm'){
-   const range=attack==='lunge'?160:attack==='combo'?90:96
+  if(attack==='slash'||attack==='lunge'||attack==='combo'||attack==='spin'||attack==='slam'||attack==='cataclysm'){
+   const range=attack==='slash'?43:!foe.large?(attack==='combo'?49:57):attack==='lunge'?160:attack==='combo'?90:96
    this.prepareStrike(foe,range,()=>{
     if(attack==='cataclysm'){
      this.useMiniAttack(foe,'slam',aim)
      if(this.mode!=='run')return
      this.miniPool(aim,foe,39,925)
      this.queue(foe,430,()=>this.miniFire(foe,foe.angle,15,Math.PI*2/15,.21))
-    }else this.useMiniAttack(foe,attack,aim)
-   },attack==='lunge'||attack==='combo'?foe.angle:undefined)
+    }else if(attack==='slash')this.miniStrike(foe,foe.angle,43,1.18)
+    else this.useMiniAttack(foe,attack,aim)
+   },attack==='slash'||attack==='lunge'||attack==='combo'?foe.angle:undefined)
    return
   }
   switch(attack){
@@ -666,7 +667,7 @@ export class Combat extends Phaser.Scene {
    if(this.mode!=='run')return
   }
   const attack=profile.patterns[foe.attacks%profile.patterns.length]
-  const reach:Partial<Record<AbyssAttack,number>>={lunge:165,combo:87,slam:117,spin:96,cataclysm:150,trail:175}
+  const reach:Partial<Record<AbyssAttack,number>>={slash:43,lunge:165,combo:foe.large?87:45,slam:foe.large?117:57,spin:foe.large?96:55,cataclysm:150,trail:175}
   const inRange=range<=(reach[attack]??360)
   const meleeMinion=!foe.large&&(foe.kind===0||foe.kind===3)
   const ready=meleeMinion?this.meleeReady(foe,inRange):inRange
@@ -685,7 +686,7 @@ export class Combat extends Phaser.Scene {
   const flank=foe.kind===2?Math.sin(this.elapsed/220+foe.x)>0?1:-1:foe.flank
   const ranged=profile.preferred>=90
   let direction=angle
-  if(range<profile.preferred+12)direction=angle+flank*Math.PI/2
+  if(range<profile.preferred+(meleeMinion?-6:12))direction=angle+flank*Math.PI/2
   const original={x:foe.x,y:foe.y}
   const speed=profile.pace*(foe.elite?1.15:1)*(foe.slow>this.elapsed?1-foe.slowPower*.55:1)*(this.bridge.challenge.has('Swift Foes')?1.18:1)
   const step=foe.strikePreview||(ranged&&range<profile.preferred-26)?0:speed*delta
@@ -732,8 +733,8 @@ export class Combat extends Phaser.Scene {
   }
   const bossPatterns=[[3,2,5,0],[4,2,4,5],[3,5,2,5]]
   const cycle=foe.boss?bossPatterns[b.floor]:[foe.kind,foe.kind===3?2:3,foe.kind===5?4:5]
-  const pattern=foe.large?cycle[(foe.attacks+phase)%cycle.length]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind
-  const reach=pattern===0?(foe.large?48:encounters.meleeReach):pattern===3?(foe.large?126:101):foe.large?300:foe.role==='ranged'?235:275
+  const pattern=foe.large?cycle[(foe.attacks+phase)%cycle.length]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind===3?0:foe.kind
+  const reach=pattern===0?(foe.large?48:encounters.meleeReach):pattern===3?126:foe.large?300:foe.role==='ranged'?235:275
   const inRange=range<reach
   const meleeMinion=!foe.large&&(pattern===0||pattern===3)
   const ready=meleeMinion?this.meleeReady(foe,inRange):inRange
@@ -747,7 +748,7 @@ export class Combat extends Phaser.Scene {
    const color=foe.effect?effectColor[foe.effect]:tones[foe.kind]
    if(pattern===0||pattern===3) {
     const strike=()=>{
-     const distance=pattern===3?Math.min(foe.large?85:69,Math.max(0,range-12)):0
+     const distance=pattern===3?Math.min(85,Math.max(0,range-12)):0
      foe.x=clamp(foe.x+Math.cos(foe.angle)*distance,26,W-26)
      foe.y=clamp(foe.y+Math.sin(foe.angle)*distance,28,H-28)
      const reach=foe.large?48:encounters.meleeReach
@@ -778,7 +779,7 @@ export class Combat extends Phaser.Scene {
     }
    }
   }
-  const melee=foe.role==='melee'||(!foe.large&&foe.role==='special'&&foe.kind===0)
+  const melee=foe.role==='melee'||(!foe.large&&foe.role==='special'&&(foe.kind===0||foe.kind===3))
   const desired=foe.large?40:melee?15:foe.role==='ranged'?112:foe.kind===3?37:98
   if(!foe.strikePreview&&(range>desired||(foe.role==='ranged'&&range>=82))){
    const speed=(foe.large?52:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7

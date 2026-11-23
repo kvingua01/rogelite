@@ -171,6 +171,19 @@ try {
  })
  assert.ok(timing?.chasing&&timing.indicators===0&&timing.waited&&timing.reset&&timing.repeatWait&&timing.repeatAttack&&timing.strikeDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
   timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.rangedHeldGround&&timing.upright,JSON.stringify(timing))
+ const charger=await read(g=>{
+  const scene=g.scene
+  const foe=scene.spawn(300,144,3)
+  foe.role='special';foe.next=scene.elapsed
+  scene.player.setPosition(220,144)
+  scene.enemy(foe,.016)
+  const closedBy=300-foe.x
+  const chased=closedBy>0&&closedBy<3&&foe.attacks===0&&!foe.strikePreview
+  foe.sprite.destroy()
+  scene.foes.pop()
+  return chased
+ })
+ assert.ok(charger)
  const eliteTiming=await read(g=>{
   const scene=g.scene,player=scene.player
   const elite=scene.spawn(305,145,2)
@@ -565,7 +578,7 @@ try {
    }
    if(scene.foes.some(f=>f.kind===4))throw Error('Abyssal Sorcerer spawned in a combat wave')
    const foe=scene.foes.find(f=>f.kind===index)
-   scene.player.setPosition(215,141)
+   scene.player.setPosition(index===0||index===3?240:215,141)
    scene.invulnerable=Infinity
    foe.x=280;foe.y=141;foe.next=scene.elapsed
    const x=foe.x,shots=scene.shots.length
