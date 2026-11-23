@@ -33,12 +33,10 @@ export const relics: Relic[] = [
  {name:'Thunder Rune',rank:2,detail:'Strike all enemies. At III, briefly slow them.',charge:'kills',cap:7},
  {name:'Grave Lantern',rank:3,detail:'Gain a protective ward. At III, damage all enemies.',charge:'rooms',cap:3},
 ]
-export const rangedTraining = 'Ranged Weapon Training'
 export const upgrades = [
- {name:rangedTraining,building:'Training Grounds',detail:'Unlock the projectile slot and Wooden Bow',cost:125,max:1,requires:''},
  {name:'Vitality',building:'Training Grounds',detail:'+15 maximum HP',cost:110,max:4,requires:''},
  {name:'Swordcraft',building:'Training Grounds',detail:'+12% melee damage',cost:155,max:3,requires:'Vitality'},
- {name:'Marksmanship',building:'Training Grounds',detail:'+12% projectile damage',cost:155,max:3,requires:rangedTraining},
+ {name:'Marksmanship',building:'Training Grounds',detail:'+12% projectile damage',cost:155,max:3,requires:''},
  {name:'Precision',building:'Training Grounds',detail:'+5% critical hit chance',cost:245,max:3,requires:'Swordcraft'},
  {name:'Forge',building:'Blacksmith',detail:'Unlock advanced crafting recipes',cost:245,max:1,requires:''},
  {name:'Herbalism',building:'Alchemist',detail:'+20% pickup and potion healing',cost:115,max:3,requires:''},
@@ -58,8 +56,8 @@ export const contracts = [
  {name:'Hollow Cup',debuff:'Receive half healing',blessing:'Restore 5 HP after combat',rooms:5},
  {name:'Broken Shield',debuff:'Dodge cooldown is doubled',blessing:'Shadow bolts pierce',rooms:3},
 ]
-export type Save = {version:3; gold:number; materials:number; bossMaterials:BossMaterials; abyssVictories:number; blueprints:string[]; unlocked:string[]; loadout:[string,string|null]; upgrades:Record<string,number>; victories:number; mute:boolean}
-export const fresh = ():Save => ({version:3,gold:0,materials:0,bossMaterials:emptyBossMaterials(),abyssVictories:0,blueprints:[],unlocked:['Rusty Sword'],loadout:['Rusty Sword',null],upgrades:{},victories:0,mute:false})
+export type Save = {version:3; gold:number; materials:number; bossMaterials:BossMaterials; abyssVictories:number; blueprints:string[]; unlocked:string[]; loadout:[string,string]; upgrades:Record<string,number>; victories:number; mute:boolean}
+export const fresh = ():Save => ({version:3,gold:0,materials:0,bossMaterials:emptyBossMaterials(),abyssVictories:0,blueprints:[],unlocked:['Rusty Sword','Wooden Bow'],loadout:['Rusty Sword','Wooden Bow'],upgrades:{},victories:0,mute:false})
 export function decode(raw:string|null): Save {
  const base = fresh()
  try {
@@ -79,16 +77,10 @@ export function decode(raw:string|null): Save {
    const level = parsed.upgrades?.[upgrade.name]
    if (Number.isInteger(level) && level > 0) base.upgrades[upgrade.name] = Math.min(level,upgrade.max)
   }
-  if (base.upgrades[rangedTraining] || base.unlocked.some(name=>weapons.some(w=>w.name===name&&w.slot===1))) unlockRanged(base)
   base.mute = parsed.mute === true
  } catch { return base }
  return base
 }
 export const relicLevel = (old: number) => Math.min(3, old + 1)
 export const contractClear = (remaining: number, kind: string, alreadyCleared: boolean) => kind === 'Combat' && !alreadyCleared ? Math.max(0, remaining - 1) : remaining
-export function unlockRanged(save:Save) {
- save.upgrades[rangedTraining]=1
- if(!save.unlocked.includes('Wooden Bow')) save.unlocked.push('Wooden Bow')
- save.loadout[1]??='Wooden Bow'
-}
 export const upgradeCost = (cost: number, level: number) => Math.round(cost * (1 + economy.upgradeGrowth * level * (level + 1) / 2))

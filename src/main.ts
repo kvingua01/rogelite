@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { Combat, type CombatBridge } from './combat'
 import { H, W } from './art'
-import { challenges, colors, contracts, contractClear, decode, rarity, rangedTraining, unlockRanged, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
+import { challenges, colors, contracts, contractClear, decode, rarity, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
 import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
 import { economy, goldMultiplierForFloor, healingRoomInterval, relicPower, relicSlotCount } from './balance'
@@ -26,7 +26,7 @@ const bar=(value:number)=><string>`<i style="width:${Math.max(0,Math.min(100,val
 class Game implements CombatBridge {
  save:Save
  scene=new Combat()
- loadout:readonly [Weapon,Weapon|null]=[weapons[0],null]
+ loadout:readonly [Weapon,Weapon]=[weapons[0],weapons[1]]
  rooms:Room[]=[]
  room!:Room
  floor=0
@@ -103,11 +103,9 @@ class Game implements CombatBridge {
  get charge(){const relic=this.active;return relic?this.activeCharges.get(relic.name)??relic.cap??0:0}
  set charge(amount:number){if(this.active)this.activeCharges.set(this.active.name,amount)}
  switchWeapon(){
-  if(!this.loadout[1])return
   this.slot=this.slot===0?1:0
   this.refresh()
  }
- canEquipWeapon(weapon:Weapon){return weapon.slot===0||this.level(rangedTraining)>0}
  resetRelics(){
   this.levels.clear()
   this.equipped.fill(null)
@@ -190,7 +188,7 @@ class Game implements CombatBridge {
   return 'Blueprint discovered · '+name
  }
  newRun(){
-  this.loadout=[selectWeapon(this.save.loadout[0]),this.save.loadout[1]?selectWeapon(this.save.loadout[1]):null]
+  this.loadout=[selectWeapon(this.save.loadout[0]),selectWeapon(this.save.loadout[1])]
   this.maxHP=100+this.level('Vitality')*15;this.hp=this.maxHP
   this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
   this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.earnedBossMaterials=emptyBossMaterials();this.normalCompleted=false;this.firstNormalVictory=false;this.statsBonus=0;this.dodgeDraughts=0
@@ -429,7 +427,6 @@ class Game implements CombatBridge {
   if(!this.save.blueprints.includes(w.name))return 'Not discovered'
   if(w.parent&&!this.save.unlocked.includes(w.parent))return 'Requires '+w.parent
   if(w.requiresForge&&!this.level('Forge'))return 'Requires Forge'
-  if(!this.canEquipWeapon(w))return 'Requires '+rangedTraining
   if(!hasRecipeMaterials(this.save,recipe))return 'Missing materials'
   if(this.save.gold<(recipe.gold??0))return 'Missing gold'
   return 'Ready to craft'
@@ -439,7 +436,7 @@ class Game implements CombatBridge {
   const scroll=this.menu==='blacksmith'?overlay.querySelector('.panel')?.scrollTop??0:0
   const workbench=document.createElement('div')
   const equipped=document.createElement('p')
-  equipped.textContent='Equipped melee: '+this.save.loadout[0]+' · Equipped ranged: '+(this.save.loadout[1]??'Locked · Requires '+rangedTraining)
+  equipped.textContent='Equipped melee: '+this.save.loadout[0]+' · Equipped ranged: '+this.save.loadout[1]
   workbench.append(equipped)
   const list=document.createElement('div')
   list.className='forge-recipes'
@@ -451,7 +448,7 @@ class Game implements CombatBridge {
    const owned=this.save.unlocked.includes(weapon.name)
    const isEquipped=this.save.loadout[weapon.slot]===weapon.name
    const status=document.createElement('strong')
-   status.textContent=isEquipped?'Equipped':owned?(weapon.parent?'Crafted':'Unlocked'):weapon.parent?this.recipeStatus(weapon):'Requires '+rangedTraining
+   status.textContent=isEquipped?'Equipped':owned?(weapon.parent?'Crafted':'Unlocked'):weapon.parent?this.recipeStatus(weapon):'Starter weapon'
    const stats=document.createElement('small')
    stats.textContent=(weapon.slot?'Ranged':'Melee')+' · '+this.weaponStats(weapon)
    card.append(name,status,stats)
@@ -465,9 +462,9 @@ class Game implements CombatBridge {
    const button=document.createElement('button')
    button.type='button'
    button.textContent=(owned?'Equip ':'Craft ')+weapon.name
-   button.disabled=owned?isEquipped||!this.canEquipWeapon(weapon):!weapon.parent||status.textContent!=='Ready to craft'
+   button.disabled=owned?isEquipped:!weapon.parent||status.textContent!=='Ready to craft'
    button.onclick=()=>{
-    if(!this.atBlacksmith()||!this.canEquipWeapon(weapon))return
+    if(!this.atBlacksmith())return
     if(owned){
      if(!this.save.unlocked.includes(weapon.name))return
      this.save.loadout[weapon.slot]=weapon.name
@@ -495,7 +492,7 @@ class Game implements CombatBridge {
    ...upgrades.filter(u=>u.building===building).map(u=>{
     const level=this.level(u.name),cost=upgradeCost(u.cost,level)
     return {title:u.name+' '+level+'/'+u.max,detail:`${u.building} · ${u.detail} · ${level>=u.max?'Maxed':cost+' gold'}${u.requires?' · Requires '+u.requires:''}`,disabled:level>=u.max||this.save.gold<cost||!!u.requires&&!this.level(u.requires),action:()=>{
-     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;if(u.name===rangedTraining)unlockRanged(this.save);this.persist();this.scene.showCastle(name=>upgrades.filter(u=>u.building===name).reduce((sum,u)=>sum+this.level(u.name),0));this.castleStatus();this.improve(building,person,line)
+     this.save.gold-=cost;this.save.upgrades[u.name]=level+1;this.persist();this.scene.showCastle(name=>upgrades.filter(u=>u.building===name).reduce((sum,u)=>sum+this.level(u.name),0));this.castleStatus();this.improve(building,person,line)
     }}
    }),{title:'Back to castle',action:()=>this.castle()},
   ])
@@ -535,7 +532,7 @@ class Game implements CombatBridge {
   for(const slot of [0,1] as const){
    const weapon=this.loadout[slot]
    const item=document.createElement('p')
-   item.textContent=(slot?'Ranged · ':'Melee · ')+(weapon?weapon.name+' · '+this.weaponStats(weapon):'Locked · Requires '+rangedTraining)
+   item.textContent=(slot?'Ranged · ':'Melee · ')+weapon.name+' · '+this.weaponStats(weapon)
    equipped.append(item)
   }
   this.dialog('Run equipment','Equipped weapons','Your loadout is locked for this run. Switch between your equipped weapons with Q or the mouse wheel.',[
@@ -628,7 +625,7 @@ class Game implements CombatBridge {
    <div class="mini">${this.mapMarkup(false)}</div>
    ${boss?`<div class="boss ${boss.mini||this.floor===3?'miniboss-bar':''}">${this.scene.bossName}${boss.mini||this.floor===3?' · Phase '+(boss.phase+1)+(this.floor===3?' / 4':''):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}
-   <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Requires '+rangedTraining}">${i===0?'⚔':'➶'} ${w?.name??'Locked · '+rangedTraining}</span>`).join('')}</div>
+   <div class="loadout">${this.loadout.map((w,i)=>`<span class="${i===this.slot?'selected':''}" title="${w?'':'Starter weapon'}">${i===0?'⚔':'➶'} ${w.name}</span>`).join('')}</div>
    <div class="relic-hud"><div class="relic-hint">I — Weapons · R — Relics · ${pct(this.power)} power</div><div class="hud-slots">${this.equipped.map(relic=>relic?`<div class="hud-relic" title="${relic.name} · ${rarity[relic.rank]}" style="color:${colors[relic.rank]}">${icon(relic)} ${numerals[this.relicLevel(relic.name)]}${relic.cap?` · E<div class="charge" title="${pct(this.charge/relic.cap)} charged">${bar(this.charge/relic.cap)}</div>`:''}</div>`:'<div class="hud-relic empty" title="Empty relic slot">◇</div>').join('')}</div></div>`
  }
 }

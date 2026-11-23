@@ -33,7 +33,7 @@ Each main boss grants one permanent material. The Blacksmith lists Cursed Bone, 
 
 Defeating the Fallen King records a normal victory and opens an optional portal to the Abyssal Depths. You can finish the run or carry your current health and equipment into the fourth floor. Abyssal victories are tracked separately.
 
-New saves start with the Rusty Sword. Buy Ranged Weapon Training at the castle for 125 gold to unlock the Wooden Bow and projectile slot. Existing ranged unlocks carry forward.
+New saves start with the Rusty Sword and Wooden Bow. Existing saves keep their equipped weapons and receive the Wooden Bow as a fallback if they had no ranged weapon.
 
 Discover blueprints during runs and spend gold and materials at the castle Blacksmith to unlock weapons permanently. Equip one melee weapon and, after training, one ranged weapon before entering the dungeon. Press I during a run to view your locked loadout. Dungeon shops sell provisions.
 

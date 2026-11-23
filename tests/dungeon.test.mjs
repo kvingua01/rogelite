@@ -1,7 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {generate, generateAbyss, floors} from '../src/dungeon.ts'
-import {contractClear, decode, fresh, rangedTraining, relicLevel, unlockRanged, upgradeCost, upgrades} from '../src/data.ts'
+import {contractClear, decode, fresh, relicLevel, upgradeCost, upgrades} from '../src/data.ts'
 import {economy, encounters, relicPower, goldMultiplierForFloor, waveCount, waveSize} from '../src/balance.ts'
 
 test('300 layouts contain every room type and connect every patch to its miniboss',()=>{
@@ -45,7 +45,6 @@ test('save decoding preserves progression and validates loadout against slots an
  assert.equal(decoded.materials,5)
  assert.equal(decoded.victories,1)
  assert.equal(decoded.upgrades.Vitality,2)
- assert.equal(decoded.upgrades[rangedTraining],1)
  assert.ok(decoded.unlocked.includes('Storm Staff'))
  assert.deepEqual(decode(JSON.stringify({...save,loadout:['Grave Axe','Storm Staff']})).loadout,['Grave Axe','Storm Staff'])
  assert.deepEqual(decode('{ invalid'),fresh())
@@ -59,14 +58,13 @@ test('contracts count new combat clears and relic evolution caps at three',()=>{
  assert.deepEqual([0,1,2,3].map(relicLevel),[1,2,3,3])
 })
 
-test('fresh saves start melee-only and ranged training survives reload',()=>{
+test('fresh and melee-only legacy saves get a free Wooden Bow',()=>{
  const save=fresh()
- assert.deepEqual(decode(JSON.stringify(save)).loadout,['Rusty Sword',null])
- assert.ok(!save.unlocked.includes('Wooden Bow'))
- unlockRanged(save)
- unlockRanged(save)
- assert.deepEqual(decode(JSON.stringify(save)).loadout,['Rusty Sword','Wooden Bow'])
- assert.equal(save.unlocked.filter(name=>name==='Wooden Bow').length,1)
+ assert.deepEqual(save.loadout,['Rusty Sword','Wooden Bow'])
+ const migrated=decode(JSON.stringify({...save,gold:43,unlocked:['Rusty Sword'],loadout:['Rusty Sword',null]}))
+ assert.deepEqual(migrated.loadout,save.loadout)
+ assert.deepEqual(migrated.unlocked,save.unlocked)
+ assert.equal(migrated.gold,43)
 })
 test('relic power applies evenly to the entire loadout',()=>{
  assert.deepEqual([1,2,3].map(count=>20*relicPower(count)),[20,16,12])
@@ -196,6 +194,6 @@ test('old inventory-only weapons are never promoted to permanent unlocks',()=>{
  const existing={...fresh(),unlocked:['Rusty Sword','Grave Axe'],loadout:['Cinder Hammer','Night Knives'],
   carriedWeapons:['Cinder Hammer','Night Knives'],temporaryWeapons:['Cinder Hammer','Night Knives']}
  const migrated=decode(JSON.stringify(existing))
- assert.deepEqual(migrated.unlocked,['Rusty Sword','Grave Axe'])
- assert.deepEqual(migrated.loadout,['Rusty Sword',null])
+ assert.deepEqual(migrated.unlocked,['Rusty Sword','Wooden Bow','Grave Axe'])
+ assert.deepEqual(migrated.loadout,['Rusty Sword','Wooden Bow'])
 })
