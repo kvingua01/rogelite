@@ -12,6 +12,8 @@ export const economy = {
  upgradeGrowth: .55,
 } as const
 
+export const goldMultiplierForFloor = (floor:number) => economy.goldRewardMultiplier*(floor===0?2:1)
+
 export const waveSize = 3
 export const healingRoomInterval = 6
 export const regularAttackRate = .75

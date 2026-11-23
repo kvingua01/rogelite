@@ -671,11 +671,10 @@ export class Combat extends Phaser.Scene {
   const flank=foe.kind===2?Math.sin(this.elapsed/220+foe.x)>0?1:-1:foe.flank
   const ranged=profile.preferred>=90
   let direction=angle
-  if(ranged&&range<profile.preferred-26)direction=angle+Math.PI+flank*.25
-  else if(range<profile.preferred+12)direction=angle+flank*Math.PI/2
+  if(range<profile.preferred+12)direction=angle+flank*Math.PI/2
   const original={x:foe.x,y:foe.y}
   const speed=profile.pace*(foe.elite?1.15:1)*(foe.slow>this.elapsed?1-foe.slowPower*.55:1)*(this.bridge.challenge.has('Swift Foes')?1.18:1)
-  const step=speed*delta
+  const step=ranged&&range<profile.preferred-26?0:speed*delta
   this.arenaStep(foe,direction,step,foe.radius)
   if(Math.hypot(original.x-foe.x,original.y-foe.y)<step*.3)this.arenaStep(foe,angle+flank*1.1,step,foe.radius)
   for(const other of this.foes){
@@ -763,16 +762,15 @@ export class Combat extends Phaser.Scene {
   }
   const melee=foe.role==='melee'||(!foe.large&&foe.role==='special'&&foe.kind===0)
   const desired=foe.large?40:melee?15:foe.role==='ranged'?112:foe.kind===3?37:98
-  const retreat=foe.role==='ranged'&&range<82
-  if(range>desired||retreat||(foe.role==='ranged'&&range>=82)){
+  if(range>desired||(foe.role==='ranged'&&range>=82)){
    const speed=(foe.large?52:melee?enemyTiming.meleeSpeed:enemyTiming.rangedSpeed)+b.floor*7
    const previous={x:foe.x,y:foe.y}
    const step=speed*(foe.elite?enemyTiming.eliteSpeed:1)*(b.challenge.has('Swift Foes')?1.27:1)*(foe.slow>this.elapsed?1-foe.slowPower:1)*delta
    const strafe=foe.kind%2===0?foe.flank:Math.sin(this.elapsed/450+foe.kind)>0?1:-1
-   let approach=retreat?angle+Math.PI:angle+(melee&&range>34?foe.flank*.42:0)
+   let approach=angle+(melee&&range>34?foe.flank*.42:0)
    if(foe.role==='ranged'&&range>=82&&range<=desired)approach=angle+strafe*Math.PI/2
    const out=(a:number)=>foe.x+Math.cos(a)*12<25||foe.x+Math.cos(a)*12>W-25||foe.y+Math.sin(a)*12<26||foe.y+Math.sin(a)*12>H-26
-   if(out(approach)&&(retreat||foe.role==='ranged')){
+   if(out(approach)&&foe.role==='ranged'){
     const side=angle+strafe*Math.PI/2
     approach=out(side)?angle-strafe*Math.PI/2:side
    }

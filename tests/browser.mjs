@@ -174,12 +174,16 @@ try {
   scene.enemy(ranged,.016)
   const rangedCooldown=Math.abs(ranged.next-scene.elapsed-enemyTiming.rangedCooldown/.75)<.001&&scene.shots.length===shots+fired
   const rangedMovedOnCooldown=Math.hypot(ranged.x-location.x,ranged.y-location.y)>0
+  p.setPosition(ranged.x-28,ranged.y)
+  const closePosition={x:ranged.x,y:ranged.y}
+  scene.enemy(ranged,.016)
+  const rangedHeldGround=ranged.x===closePosition.x&&ranged.y===closePosition.y
   g.hp=health;scene.invulnerable=scene.elapsed+1000
-  return {chasing,indicators,waited,reset,repeatWait,repeatAttack,strikeDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
+  return {chasing,indicators,waited,reset,repeatWait,repeatAttack,strikeDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,rangedHeldGround,
    upright:melee.sprite.angle===0&&ranged.sprite.angle===0}
  })
  assert.ok(timing?.chasing&&timing.indicators===0&&timing.waited&&timing.reset&&timing.repeatWait&&timing.repeatAttack&&timing.strikeDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
-  timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.upright,JSON.stringify(timing))
+  timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.rangedHeldGround&&timing.upright,JSON.stringify(timing))
  const eliteTiming=await read(g=>{
   const scene=g.scene,player=scene.player
   const elite=scene.spawn(305,145,4)
@@ -439,7 +443,7 @@ try {
  await read(g=>g.scene.damage(g.scene.foes[0],100000))
  await page.getByText('Miniboss reward',{exact:true}).waitFor()
  await page.locator('.panel .cards button').first().click()
- assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+8,miniBalances[1],miniBalances[2]+1])
+ assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+16,miniBalances[1],miniBalances[2]+1])
  for(const [name,material] of [['Skeleton King','Cursed Bone'],['Blighted Guardian','Blighted Heart'],['Fallen King','Infernal Core']]){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))
   assert.equal(await page.locator('.boss').innerText(),name)

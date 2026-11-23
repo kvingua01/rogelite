@@ -2,7 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {generate, generateAbyss, floors} from '../src/dungeon.ts'
 import {contractClear, decode, fresh, rangedTraining, relicLevel, unlockRanged, upgradeCost, upgrades} from '../src/data.ts'
-import {economy, encounters, relicPower, waveCount, waveSize} from '../src/balance.ts'
+import {economy, encounters, relicPower, goldMultiplierForFloor, waveCount, waveSize} from '../src/balance.ts'
 
 test('300 layouts contain every room type and connect every patch to its miniboss',()=>{
  const types=['Entry','Combat','Treasure','Shop','Curse Altar','Secret','Trap','Miniboss','Boss','Event','Blacksmith']
@@ -80,11 +80,11 @@ test('procedural floor gold estimates stay inside the economy targets',()=>{
  const floorGold=encounters.enemies.slice(0,3).map((count,floor)=>{
   const eliteChance=encounters.eliteShare+floor*.035
   const enemyGold=eliteChance*economy.eliteGold[floor]+(1-eliteChance)*economy.normalDropChance*economy.normalGold
-  return economy.goldRewardMultiplier*(averageRooms*waveCount(count)*waveSize*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold)
+  return goldMultiplierForFloor(floor)*(averageRooms*waveCount(count)*waveSize*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold)
  })
- assert.ok(floorGold[0]>=60&&floorGold[0]<=120,JSON.stringify(floorGold))
+ assert.ok(floorGold[0]>=120&&floorGold[0]<=240,JSON.stringify(floorGold))
  const total=floorGold.reduce((sum,gold)=>sum+gold,0)
- assert.ok(total>=240&&total<=410,JSON.stringify(floorGold))
+ assert.ok(total>=300&&total<=530,JSON.stringify(floorGold))
  assert.ok(upgrades.every(upgrade=>upgrade.cost>=100))
  assert.ok(upgradeCost(110,3)-upgradeCost(110,2)>upgradeCost(110,2)-upgradeCost(110,1))
 })

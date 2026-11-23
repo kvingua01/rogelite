@@ -4,7 +4,7 @@ import { H, W } from './art'
 import { challenges, colors, contracts, contractClear, decode, rarity, rangedTraining, unlockRanged, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
 import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
-import { economy, healingRoomInterval, relicPower, relicSlotCount } from './balance'
+import { economy, goldMultiplierForFloor, healingRoomInterval, relicPower, relicSlotCount } from './balance'
 import { type Building } from './castle'
 import { abyssalWeapon, bossMaterials, emptyBossMaterials, hasRecipeMaterials, payRecipe, recipeCost, recipes } from './materials'
 import './style.css'
@@ -130,7 +130,7 @@ class Game implements CombatBridge {
  gold(amount:number){
   const total=amount*(1+this.level('Tithes')*.15+this.challenge.size*.13)
   const whole=Math.floor(total)
-  const gain=economy.goldRewardMultiplier*(whole+(total>whole&&Math.random()<total-whole?1:0))
+  const gain=goldMultiplierForFloor(this.floor)*(whole+(total>whole&&Math.random()<total-whole?1:0))
   this.save.gold+=gain;this.earnedGold+=gain;this.persist()
  }
  heal(amount:number){this.hp=Math.min(this.maxHP,this.hp+amount*(1+this.level('Herbalism')*.2)*(this.curse('Hollow Cup')?.5:1));this.refresh()}
@@ -160,7 +160,7 @@ class Game implements CombatBridge {
   const level=this.levels.get(relic.name)??0
   if(level===3){
    this.gold(economy.duplicateGold)
-   this.notice('Maximum evolution · +'+(economy.duplicateGold*economy.goldRewardMultiplier)+' base gold')
+   this.notice('Maximum evolution · +'+(economy.duplicateGold*goldMultiplierForFloor(this.floor))+' base gold')
    done();return
   }
   this.levels.set(relic.name,relicLevel(level))
@@ -323,7 +323,7 @@ class Game implements CombatBridge {
    this.dialog(room.kind,room.fountain?'The pilgrim’s fountain':room.kind==='Secret'?'Hidden sanctuary':'Abandoned shrine',
     room.fountain?'Drink once to restore 40 HP.':'Search the remains for supplies.',[
      ...(room.fountain?[{title:'Drink',action:()=>claim(true)}]:[]),
-     {title:'Search the shrine',detail:room.kind==='Event'?'Collect '+(economy.eventGold*economy.goldRewardMultiplier)+' base gold.':undefined,action:()=>claim(false)},
+     {title:'Search the shrine',detail:room.kind==='Event'?'Collect '+(economy.eventGold*goldMultiplierForFloor(this.floor))+' base gold.':undefined,action:()=>claim(false)},
      {title:'Leave',action:()=>this.resume()},
     ])
 
