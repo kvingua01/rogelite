@@ -22,7 +22,7 @@ type Effects = Partial<Record<Effect,number>>
 type Point = {x:number;y:number}
 type Volley = {limit:number; spent:Map<Foe,number>; affected:Set<Foe>}
 type Shot = Point & {vx:number;vy:number;life:number;damage:number;friendly:boolean;effects:Effects;pierce:number;bounce:number;home:number;hit:Set<Foe>;volley?:Volley;crescent?:boolean}
-type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number;mini?:Profile;miniWarning?:{attack:Attack|'phase';aim:Point;angle:number;at:number};resistUntil:number;guardUntil:number;pursuit:number;abyss?:AbyssProfile;summoned?:boolean}
+type Foe = Point & {sprite:Phaser.GameObjects.Image; hp:number;max:number;kind:number;elite:boolean;effect?:Effect;large:boolean;boss:boolean;next:number;meleeInRangeSince?:number;angle:number;slow:number;slowPower:number;burn:number;dot:number;phase:number;role:'melee'|'ranged'|'special';flank:number;strike:number;attacks:number;echo:{time:number;angle:number;count:number;speed:number}|null;radius:number;damage:number;mini?:Profile;miniWarning?:{attack:Attack|'phase';aim:Point;angle:number;at:number};resistUntil:number;guardUntil:number;pursuit:number;abyss?:AbyssProfile;summoned?:boolean}
 type Hazard = Point & {r:number;life:number;damage:number;color:number;environmental?:true}
 type Flash = Point & {life:number;max:number;color:number;angle?:number;r:number}
 export interface CombatBridge {
@@ -622,6 +622,14 @@ export class Combat extends Phaser.Scene {
     this.useMiniAttack(foe,attack,aim)
   }
  }
+ meleeReady(foe:Foe,inRange:boolean){
+  if(!inRange){
+   foe.meleeInRangeSince=undefined
+   return false
+  }
+  foe.meleeInRangeSince??=this.elapsed
+  return this.elapsed-foe.meleeInRangeSince>=1000
+ }
  tickAbyss(foe:Foe,delta:number){
   const p=this.player
   const angle=Math.atan2(p.y-foe.y,p.x-foe.x)
@@ -643,20 +651,22 @@ export class Combat extends Phaser.Scene {
    }else this.abyssAttack(foe,phase===2?'eruption':'cataclysm',aim)
    if(this.mode!=='run')return
   }
-  if(this.elapsed>=foe.next){
-   const attack=profile.patterns[foe.attacks%profile.patterns.length]
-   const reach:Partial<Record<AbyssAttack,number>>={lunge:165,combo:87,slam:117,spin:96,cataclysm:150,trail:175}
-   if(range<=(reach[attack]??360)){
-    foe.angle=angle
-    if(!foe.boss&&foe.kind===1){
-     foe.angle=Phaser.Math.Angle.RotateTo(angle,Math.atan2(p.y+clamp(this.velocity.y*.25,-42,42)-foe.y,p.x+clamp(this.velocity.x*.25,-42,42)-foe.x),.57)
-    }
-    foe.attacks++
-    foe.strike=this.elapsed+175
-    foe.next=this.elapsed+(profile.cooldown*(foe.elite?.85:1)+(['void-storm','cataclysm','spiral'].includes(attack)?260:0))/(foe.large?1:regularAttackRate)
-    this.abyssAttack(foe,attack,{x:p.x,y:p.y})
-    if(this.mode!=='run')return
+  const attack=profile.patterns[foe.attacks%profile.patterns.length]
+  const reach:Partial<Record<AbyssAttack,number>>={lunge:165,combo:87,slam:117,spin:96,cataclysm:150,trail:175}
+  const inRange=range<=(reach[attack]??360)
+  const meleeMinion=!foe.large&&(foe.kind===0||foe.kind===3)
+  const ready=meleeMinion?this.meleeReady(foe,inRange):inRange
+  if(ready&&this.elapsed>=foe.next){
+   foe.meleeInRangeSince=undefined
+   foe.angle=angle
+   if(!foe.boss&&foe.kind===1){
+    foe.angle=Phaser.Math.Angle.RotateTo(angle,Math.atan2(p.y+clamp(this.velocity.y*.25,-42,42)-foe.y,p.x+clamp(this.velocity.x*.25,-42,42)-foe.x),.57)
    }
+   foe.attacks++
+   foe.strike=this.elapsed+175
+   foe.next=this.elapsed+(profile.cooldown*(foe.elite?.85:1)+(['void-storm','cataclysm','spiral'].includes(attack)?260:0))/(foe.large?1:regularAttackRate)
+   this.abyssAttack(foe,attack,{x:p.x,y:p.y})
+   if(this.mode!=='run')return
   }
   const flank=foe.kind===2?Math.sin(this.elapsed/220+foe.x)>0?1:-1:foe.flank
   const ranged=profile.preferred>=90
@@ -711,7 +721,11 @@ export class Combat extends Phaser.Scene {
   const cycle=foe.boss?bossPatterns[b.floor]:[foe.kind,foe.kind===3?2:3,foe.kind===5?4:5]
   const pattern=foe.large?cycle[(foe.attacks+phase)%cycle.length]:foe.role==='melee'?0:foe.role==='ranged'?1:foe.kind
   const reach=pattern===0?(foe.large?48:encounters.meleeReach):pattern===3?(foe.large?126:101):foe.large?300:foe.role==='ranged'?235:275
-  if(this.elapsed>=foe.next&&range<reach){
+  const inRange=range<reach
+  const meleeMinion=!foe.large&&(pattern===0||pattern===3)
+  const ready=meleeMinion?this.meleeReady(foe,inRange):inRange
+  if(ready&&this.elapsed>=foe.next){
+   foe.meleeInRangeSince=undefined
    foe.angle=angle
    const cooldown=foe.large?enemyTiming.bossCooldown:foe.role==='melee'?enemyTiming.meleeCooldown:foe.role==='ranged'?enemyTiming.rangedCooldown:enemyTiming.specialCooldown
    foe.next=this.elapsed+(cooldown*(foe.elite?.8:1)-phase*160)/(foe.large?1:regularAttackRate)

@@ -127,7 +127,7 @@ try {
   const ranged=scene.foes.find(foe=>foe.role==='ranged')
   if(!melee||!ranged)return null
   const health=g.hp
-  melee.x=240;melee.y=144;melee.next=scene.elapsed;melee.strike=0
+  melee.x=240;melee.y=144;melee.next=scene.elapsed;melee.strike=0;melee.meleeInRangeSince=undefined
   p.setPosition(180,144)
   scene.shots=[];scene.flashes=[];scene.hazards=[]
   scene.enemy(melee,.05)
@@ -142,12 +142,30 @@ try {
   scene.invulnerable=0
   const before=melee.attacks
   scene.enemy(melee,.016)
-  const immediateDamage=health-g.hp
+  scene.elapsed+=999
+  scene.enemy(melee,.016)
+  const waited=melee.attacks===before&&g.hp===health
+  p.setPosition(melee.x-60,melee.y)
+  scene.enemy(melee,.016)
+  p.setPosition(melee.x-16,melee.y)
+  scene.elapsed+=1
+  scene.enemy(melee,.016)
+  const reset=melee.attacks===before
+  scene.elapsed+=1000
+  scene.enemy(melee,.016)
+  const strikeDamage=health-g.hp
   const meleeOnCooldown=Math.abs(melee.next-scene.elapsed-enemyTiming.meleeCooldown/.75)<.001&&melee.attacks===before+1
+  scene.enemy(melee,.016)
+  scene.elapsed+=999
+  scene.enemy(melee,.016)
+  const repeatWait=melee.attacks===before+1
+  scene.elapsed+=1
+  scene.enemy(melee,.016)
+  const repeatAttack=melee.attacks===before+2
   const afterStrike=melee.x
   p.setPosition(melee.x-60,melee.y)
   scene.enemy(melee,.016)
-  const meleeMovedOnCooldown=melee.x<afterStrike&&melee.attacks===before+1
+  const meleeMovedOnCooldown=melee.x<afterStrike&&melee.attacks===before+2
   ranged.x=320;ranged.y=144;ranged.next=scene.elapsed
   const shots=scene.shots.length
   scene.enemy(ranged,.016)
@@ -157,10 +175,10 @@ try {
   const rangedCooldown=Math.abs(ranged.next-scene.elapsed-enemyTiming.rangedCooldown/.75)<.001&&scene.shots.length===shots+fired
   const rangedMovedOnCooldown=Math.hypot(ranged.x-location.x,ranged.y-location.y)>0
   g.hp=health;scene.invulnerable=scene.elapsed+1000
-  return {chasing,indicators,immediateDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
+  return {chasing,indicators,waited,reset,repeatWait,repeatAttack,strikeDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
    upright:melee.sprite.angle===0&&ranged.sprite.angle===0}
  })
- assert.ok(timing?.chasing&&timing.indicators===0&&timing.immediateDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
+ assert.ok(timing?.chasing&&timing.indicators===0&&timing.waited&&timing.reset&&timing.repeatWait&&timing.repeatAttack&&timing.strikeDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
   timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.upright,JSON.stringify(timing))
  const eliteTiming=await read(g=>{
   const scene=g.scene,player=scene.player
@@ -547,6 +565,13 @@ try {
    scene.invulnerable=Infinity
    foe.x=280;foe.y=141;foe.next=scene.elapsed
    const x=foe.x,shots=scene.shots.length
+   if(index===0||index===3){
+    foe.meleeInRangeSince=undefined
+    executed=undefined
+    scene.enemy(foe,.016)
+    if(executed)throw Error('Melee attack skipped its wait')
+    scene.elapsed+=1000
+   }
    executed=undefined
    scene.enemy(foe,.016)
    profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:scene.foes.length===3&&Math.abs(foe.next-scene.elapsed-expected.cooldown*(foe.elite?.85:1)/.75)<.001&&foe.sprite.angle===0&&
