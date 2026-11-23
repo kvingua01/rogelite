@@ -80,11 +80,11 @@ test('procedural floor gold estimates stay inside the economy targets',()=>{
  const floorGold=encounters.enemies.slice(0,3).map((count,floor)=>{
   const eliteChance=encounters.eliteShare+floor*.035
   const enemyGold=eliteChance*economy.eliteGold[floor]+(1-eliteChance)*economy.normalDropChance*economy.normalGold
-  return averageRooms*count*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold
+  return economy.goldRewardMultiplier*(averageRooms*count*enemyGold+4*economy.minibossGold[floor]+economy.bossGold[floor]+economy.chestGold[floor]+economy.secretGold+economy.eventGold)
  })
- assert.ok(floorGold[0]>=30&&floorGold[0]<=60,JSON.stringify(floorGold))
+ assert.ok(floorGold[0]>=60&&floorGold[0]<=120,JSON.stringify(floorGold))
  const total=floorGold.reduce((sum,gold)=>sum+gold,0)
- assert.ok(total>=120&&total<=200,JSON.stringify(floorGold))
+ assert.ok(total>=240&&total<=400,JSON.stringify(floorGold))
  assert.ok(upgrades.every(upgrade=>upgrade.cost>=100))
  assert.ok(upgradeCost(110,3)-upgradeCost(110,2)>upgradeCost(110,2)-upgradeCost(110,1))
 })

@@ -407,7 +407,7 @@ try {
  await read(g=>g.scene.damage(g.scene.foes[0],100000))
  await page.getByText('Miniboss reward',{exact:true}).waitFor()
  await page.locator('.panel .cards button').first().click()
- assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+4,miniBalances[1],miniBalances[2]+1])
+ assert.deepEqual(await read(g=>[g.save.gold,g.save.materials,g.levels.size]),[miniBalances[0]+8,miniBalances[1],miniBalances[2]+1])
  for(const [name,material] of [['Skeleton King','Cursed Bone'],['Blighted Guardian','Blighted Heart'],['Fallen King','Infernal Core']]){
   await read(g=>g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0))
   assert.equal(await page.locator('.boss').innerText(),name)

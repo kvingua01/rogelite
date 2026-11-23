@@ -1,4 +1,5 @@
 export const economy = {
+ goldRewardMultiplier: 2,
  normalDropChance: .18,
  normalGold: 1,
  eliteGold: [2, 2, 2, 4],
