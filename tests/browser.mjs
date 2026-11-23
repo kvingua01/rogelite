@@ -439,16 +439,25 @@ try {
   assert.equal(await page.locator('.boss').innerText(),name)
   const dodge=await read(g=>{
    const scene=g.scene,foe=scene.foes[0],health=g.hp
-   foe.x=100;foe.y=100
+   foe.x=100;foe.y=100;foe.attacks=0;foe.strikePreview=undefined
+   scene.pending=[]
    scene.player.setPosition(126,100)
    foe.next=scene.elapsed
    const attacks=foe.attacks
-   scene.invulnerable=scene.elapsed+205
+   scene.invulnerable=0
+   scene.hazards=[]
    scene.enemy(foe,.016)
-   return {health,after:g.hp,damage:foe.damage,max:foe.max,immediate:foe.attacks===attacks+1&&foe.next>scene.elapsed}
+   const warned=!!foe.strikePreview||scene.hazards.some(h=>h.activeAt>scene.elapsed)
+   scene.player.setPosition(126,210)
+   const queued=scene.pending.shift()
+   if(foe.strikePreview&&queued){
+    scene.elapsed=queued.time
+    queued.execute()
+   }
+   return {health,after:g.hp,damage:foe.damage,max:foe.max,warned,attacked:foe.attacks===attacks+1&&foe.next>scene.elapsed}
   })
   assert.equal(dodge.health,dodge.after)
-  assert.ok(dodge.damage>=24&&dodge.max>=570&&dodge.immediate)
+  assert.ok(dodge.damage>=24&&dodge.max>=570&&dodge.warned&&dodge.attacked,JSON.stringify(dodge))
   await read(g=>g.scene.damage(g.scene.foes[0],100000))
   await page.getByText('Main boss defeated',{exact:true}).waitFor()
   const rewardNames=await page.locator('.panel .cards button').evaluateAll(buttons=>buttons.map(button=>button.firstChild.textContent))
@@ -569,7 +578,7 @@ try {
    }
    executed=undefined
    scene.enemy(foe,.016)
-   profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:scene.foes.length===3&&Math.abs(foe.next-scene.elapsed-expected.cooldown*(foe.elite?.85:1)/.75)<.001&&foe.sprite.angle===0&&
+   profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:scene.foes.length===3&&Math.abs(foe.next-scene.elapsed-expected.cooldown*(foe.elite?.85:1)/.75-(foe.strikePreview?520:0))<.001&&foe.sprite.angle===0&&
     (foe.x!==x||scene.shots.length>shots||scene.pending.length>0||scene.foes.some(f=>f.summoned))})
   }
   g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
@@ -581,12 +590,13 @@ try {
    const activity=()=>scene.hazards.length+scene.shots.length+scene.foes.length+scene.flashes.length
    const before=activity()
    scene.enemy(boss,.016)
-   const transition=phase===0||activity()>before
+   const transition=phase===0||activity()>before||!!boss.strikePreview
+   scene.pending=[];boss.strikePreview=undefined
    boss.x=276;boss.y=145;boss.attacks=0;boss.next=scene.elapsed
    const expected=overlordPhases[phase].patterns[0]
    executed=undefined
    scene.enemy(boss,.016)
-   stages.push({phase:boss.phase,attack:executed,expected,worked:boss.strike>scene.elapsed&&boss.next>scene.elapsed&&boss.sprite.angle===0&&transition})
+   stages.push({phase:boss.phase,attack:executed,expected,worked:(boss.strike>scene.elapsed||!!boss.strikePreview)&&boss.next>scene.elapsed&&boss.sprite.angle===0&&transition})
   }
   scene.abyssAttack=perform
   const {weapons}=await import('/src/data.ts')
@@ -612,6 +622,20 @@ try {
   assert.ok(result.worked,JSON.stringify(result))
  }
  assert.ok(abyssCombat.health>=2700&&abyssCombat.damage>=54&&abyssCombat.crescentHit)
+ const closeRangeSafety=await read(g=>{
+  const scene=g.scene
+  const health=g.hp
+  scene.invulnerable=0
+  scene.player.setPosition(236,144)
+  const shot=scene.projectile(236,144,0,150,200,20,false)
+  scene.collision(shot,16,.016)
+  const projectileGrace=g.hp===health&&shot.canHitAt>scene.elapsed
+  const boss=scene.foes.find(foe=>foe.boss)
+  scene.miniPool(scene.player,boss,25,400)
+  const pool=scene.hazards.at(-1)
+  return {projectileGrace,groundWarning:pool.activeAt-scene.elapsed===680}
+ })
+ assert.deepEqual(closeRangeSafety,{projectileGrace:true,groundWarning:true})
  await read(g=>{
   for(const foe of g.scene.foes)g.scene.damage(foe,100000)
   const random=Math.random
