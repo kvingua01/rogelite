@@ -12,6 +12,11 @@ export const economy = {
  upgradeGrowth: .55,
 } as const
 
+export const waveSize = 3
+export const healingRoomInterval = 6
+export const regularAttackRate = .75
+export const waveCount = (enemies:number) => Math.max(1,Math.round(enemies/waveSize))
+
 export const encounters = {
  enemyDamageMultiplier: .75,
  enemies: [6, 8, 9, 5],

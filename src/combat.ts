@@ -1,8 +1,8 @@
 import Phaser from 'phaser'
 import { abyssDecor, arena, cover, drawAbyssPortal, H, textures, tones, W } from './art'
 import { type Effect, type Relic, type Weapon } from './data'
-import { floors, type Room } from './dungeon'
-import { encounters, enemyTiming } from './balance'
+import { floors, type HealingPickup, type Room } from './dungeon'
+import { encounters, enemyTiming, regularAttackRate, waveCount, waveSize } from './balance'
 import { abyssEnemies, abyssPhase, overlordPhases, type AbyssAttack, type AbyssProfile } from './abyss'
 import { abyssalWeapon } from './materials'
 import { minibosses, phaseFor, type Attack, type Profile } from './miniboss'
@@ -48,7 +48,9 @@ export class Combat extends Phaser.Scene {
  pillars:(Point & {r:number})[]=[]
  pending:{owner:Foe; time:number; execute:()=>void}[]=[]
  flashes:Flash[]=[]
- drops:(Point & {amount:number})[]=[]
+ drops:HealingPickup[]=[]
+ wave=0
+ totalWaves=0
  elapsed=0
  nextAttack=0
  nextRoll=0
@@ -123,6 +125,7 @@ export class Combat extends Phaser.Scene {
  reset() {
   this.foes.forEach(foe=>foe.sprite.destroy())
   this.foes=[]; this.shots=[]; this.hazards=[]; this.flashes=[]; this.drops=[]; this.pillars=[]; this.pending=[]
+  this.wave=0;this.totalWaves=0
   this.fx.clear()
  }
  showRoom(dx=0,dy=0) {
@@ -142,32 +145,49 @@ export class Combat extends Phaser.Scene {
     if(room.kind==='Miniboss')this.pillars=[{x:137,y:82+room.patch*7,r:12},{x:374,y:212-room.patch*7,r:12}]
     this.spawn(W*.65,H*.49,(floor*2+room.patch)%7,room.kind==='Boss',true)
    }
-   else {
-    const count=encounters.enemies[floor]
-    let specials=0
-    for(let i=0;i<count;i++){
-     const angle=(i+.3)*Math.PI*2/count
-     let x=W/2+Math.cos(angle)*151
-     let y=H/2+Math.sin(angle)*89
-     if(Math.hypot(x-this.player.x,y-this.player.y)<76){
-      const choices=[{x:87,y:101},{x:171,y:69},{x:247,y:125},{x:420,y:186},{x:335,y:218}]
-      const safe=choices.find(p=>Math.hypot(p.x-this.player.x,p.y-this.player.y)>=76&&this.foes.every(f=>Math.hypot(f.x-p.x,f.y-p.y)>33))
-      if(safe){x=safe.x;y=safe.y}
-     }
-     const foe=this.spawn(x,y,floor===3?(room.patch+i)%5:(floor*2+room.patch+i)%7,false,false,floor===3||specials<count-2)
-     if(foe.role==='special')specials++
-    }
-    const basic=this.foes.filter(foe=>foe.role!=='special')
-    const meleeCount=Math.round(basic.length*encounters.meleeShare[room.patch])
-    const offset=Math.floor(Math.random()*basic.length)
-    if(floor!==3)basic.forEach((foe,index)=>{foe.role=(index+offset)%basic.length<meleeCount?'melee':'ranged'})
+   else{
+    this.totalWaves=waveCount(encounters.enemies[floor])
+    this.spawnWave()
    }
   }
+  this.drops.push(...room.healingRewards??[])
   if ((room.kind==='Trap' || (this.locked && (floor>0 || challenge.has('Scorched Ground')))) && !room.cleared) {
    const color=[0xbd7f82,0x9dc67b,0xff9960,0xaa56dd][floor]
    for(let i=0;i<(room.kind==='Trap'?6:2);i++) this.hazards.push({x:111+i%3*145,y:90+Math.floor(i/3)*110,r:13+(i%3)*3,life:Infinity,environmental:true,damage:floor===3?29:11+floor*2,color})
   }
   this.drawRoom()
+ }
+ spawnWave(){
+  const {room,floor}=this.bridge
+  const offsetForWave=this.wave*waveSize
+  this.wave++
+  const sites=[69,144,219].flatMap(y=>[84,170,256,342,428].map(x=>({x,y})))
+  const spawns=Phaser.Utils.Array.Shuffle(sites)
+   .filter(site=>Math.hypot(site.x-this.player.x,site.y-this.player.y)>=76&&this.arenaOpen(site,13))
+   .slice(0,waveSize)
+  let specials=0
+  const foes=spawns.map(({x,y},i)=>{
+   const index=offsetForWave+i
+   const foe=this.spawn(x,y,floor===3?(room.patch+index)%5:(floor*2+room.patch+index)%7,
+    false,false,floor===3||specials<waveSize-2)
+   if(foe.role==='special')specials++
+   return foe
+  })
+  if(floor!==3){
+   const basic=foes.filter(foe=>foe.role!=='special')
+   const meleeCount=Math.min(basic.length-1,Math.round(basic.length*encounters.meleeShare[room.patch]))
+   Phaser.Utils.Array.Shuffle(basic).forEach((foe,i)=>{foe.role=i<meleeCount?'melee':'ranged'})
+  }
+ }
+ addRoomHealing(amount:number){
+  const rewards=this.bridge.room.healingRewards??=[]
+  this.bridge.room.healingRewards=rewards
+  const sites=[96,144,192].flatMap(y=>[192,224,256,288,320].map(x=>({x,y})))
+  const point=sites.find(site=>this.arenaOpen(site,12)&&Math.hypot(site.x-this.player.x,site.y-this.player.y)>24&&
+   this.drops.every(drop=>Math.hypot(site.x-drop.x,site.y-drop.y)>20))??{x:W/2,y:H/2}
+  const drop={...point,amount}
+  rewards.push(drop)
+  this.drops.push(drop)
  }
  drawRoom() {
   const {room,floor,rooms}=this.bridge
@@ -406,6 +426,7 @@ export class Combat extends Phaser.Scene {
   }
  }
  miniSummon(foe:Foe,count:number){
+  if(this.bridge.room.kind==='Combat')return
   const sites=[{x:74,y:67},{x:435,y:220},{x:232,y:217},{x:438,y:63},{x:83,y:220}]
   const active=this.foes.filter(f=>f.hp>0&&(foe.abyss?f.summoned:!f.large)).length
   const safe=sites.filter(p=>Math.hypot(p.x-this.player.x,p.y-this.player.y)>105&&this.arenaOpen(p,11)&&
@@ -632,7 +653,7 @@ export class Combat extends Phaser.Scene {
     }
     foe.attacks++
     foe.strike=this.elapsed+175
-    foe.next=this.elapsed+profile.cooldown*(foe.elite?.85:1)+(['void-storm','cataclysm','spiral'].includes(attack)?260:0)
+    foe.next=this.elapsed+(profile.cooldown*(foe.elite?.85:1)+(['void-storm','cataclysm','spiral'].includes(attack)?260:0))/(foe.large?1:regularAttackRate)
     this.abyssAttack(foe,attack,{x:p.x,y:p.y})
     if(this.mode!=='run')return
    }
@@ -693,7 +714,7 @@ export class Combat extends Phaser.Scene {
   if(this.elapsed>=foe.next&&range<reach){
    foe.angle=angle
    const cooldown=foe.large?enemyTiming.bossCooldown:foe.role==='melee'?enemyTiming.meleeCooldown:foe.role==='ranged'?enemyTiming.rangedCooldown:enemyTiming.specialCooldown
-   foe.next=this.elapsed+cooldown*(foe.elite?.8:1)-phase*160
+   foe.next=this.elapsed+(cooldown*(foe.elite?.8:1)-phase*160)/(foe.large?1:regularAttackRate)
    foe.strike=this.elapsed+160
    foe.attacks++
    const color=foe.effect?effectColor[foe.effect]:tones[foe.kind]
@@ -866,12 +887,22 @@ export class Combat extends Phaser.Scene {
   if(b.paused||this.mode!=='run') return
   this.drops=this.drops.filter(d=>{
    if(Phaser.Math.Distance.Between(d.x,d.y,this.player.x,this.player.y)>12||b.hp>=b.maxHP) return true
+   const rewards=b.room.healingRewards
+   const savedIndex=rewards?.indexOf(d)??-1
+   if(savedIndex>=0)rewards?.splice(savedIndex,1)
    b.heal(d.amount);return false
   })
   this.foes=this.foes.filter(f=>f.hp>0)
   if(this.locked&&this.foes.length===0) {
-   this.locked=false;this.shots=[];this.hazards=[];this.pending=[];this.drawRoom()
-   b.clear()
+   if(this.wave<this.totalWaves){
+    this.shots=this.shots.filter(shot=>shot.friendly)
+    this.hazards=this.hazards.filter(hazard=>hazard.environmental)
+    this.pending=[]
+    this.spawnWave()
+   }else{
+    this.locked=false;this.shots=[];this.hazards=[];this.pending=[];this.drawRoom()
+    b.clear()
+   }
   }
   this.renderFX(dt)
   if(this.elapsed>=this.hudTimer){this.hudTimer=this.elapsed+100;b.refresh()}

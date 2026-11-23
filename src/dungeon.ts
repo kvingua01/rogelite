@@ -5,7 +5,8 @@ export const floors = [
   { name: 'Abyssal Depths', boss: 'Abyssal Overlord', palettes: [0x2d243f,0x382345,0x312239,0x29172f], biomes: ['Shattered Vestibule','Void Ramparts','Gloaming Ruins','Obsidian Throne'], minis: [] },
 ]
 export type Kind = 'Entry' | 'Combat' | 'Treasure' | 'Shop' | 'Curse Altar' | 'Secret' | 'Trap' | 'Miniboss' | 'Boss' | 'Event' | 'Blacksmith'
-export type Room = { id: number; x: number; y: number; patch: number; kind: Kind; neighbors: number[]; seen: boolean; cleared: boolean; used: boolean; fountain?:boolean; portal?:boolean }
+export type HealingPickup = {x:number; y:number; amount:number}
+export type Room = { id: number; x: number; y: number; patch: number; kind: Kind; neighbors: number[]; seen: boolean; cleared: boolean; used: boolean; fountain?:boolean; portal?:boolean; healingRewards?:HealingPickup[] }
 export const sample = <T>(list: readonly T[], rng = Math.random): T => list[Math.floor(rng() * list.length)]
 export function generate(rng = Math.random): Room[] {
   const rooms: Room[] = []

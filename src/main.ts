@@ -4,7 +4,7 @@ import { H, W } from './art'
 import { challenges, colors, contracts, contractClear, decode, rarity, rangedTraining, unlockRanged, relicLevel, relics, upgradeCost, upgrades, weapons, type Relic, type Save, type Weapon } from './data'
 import { floors, generate, generateAbyss, sample, type Room } from './dungeon'
 import { relicEffect } from './relic-effects'
-import { economy, relicPower, relicSlotCount } from './balance'
+import { economy, healingRoomInterval, relicPower, relicSlotCount } from './balance'
 import { type Building } from './castle'
 import { abyssalWeapon, bossMaterials, emptyBossMaterials, hasRecipeMaterials, payRecipe, recipeCost, recipes } from './materials'
 import './style.css'
@@ -46,6 +46,7 @@ class Game implements CombatBridge {
  started=0
  earnedGold=0
  earnedMaterials=0
+ roomsSinceHealing=0
  earnedBossMaterials=emptyBossMaterials()
  normalCompleted=false
  firstNormalVictory=false
@@ -194,12 +195,17 @@ class Game implements CombatBridge {
   this.slot=0;this.contract=undefined;this.resetRelics();this.blessings.clear()
   this.started=performance.now();this.earnedGold=0;this.earnedMaterials=0;this.earnedBossMaterials=emptyBossMaterials();this.normalCompleted=false;this.firstNormalVictory=false;this.statsBonus=0;this.dodgeDraughts=0
   this.scene.nextRoll=0;this.scene.nextAttack=0;this.scene.greatswordSwings=0
+  this.roomsSinceHealing=0
+  this.rooms=[]
   this.beginFloor(0)
  }
  beginFloor(floor:number){
+  const unclaimedHealing=this.rooms.flatMap(room=>room.healingRewards??[])
   const rooms=floor===3?generateAbyss(this.rooms.length||20):generate()
   this.floor=floor;this.rooms=rooms
-  this.enter(0,0,0);this.resume()
+  this.enter(0,0,0)
+  for(const drop of unclaimedHealing)this.scene.addRoomHealing(drop.amount)
+  this.resume()
   this.notice(floors[floor].name)
  }
  enter(id:number,dx:number,dy:number){
@@ -217,7 +223,14 @@ class Game implements CombatBridge {
    this.contract.remaining=contractClear(this.contract.remaining,kind,wasCleared)
    if(!this.contract.remaining){this.blessings.add(name);this.contract=undefined;this.notice('Blessing earned · '+name)}
   }
-  if(kind==='Combat'&&this.blessed('Hollow Cup')) this.heal(5)
+  if(kind==='Combat'){
+   if(this.blessed('Hollow Cup'))this.heal(5)
+   if(++this.roomsSinceHealing===healingRoomInterval){
+    this.roomsSinceHealing=0
+    this.scene.addRoomHealing(35)
+    this.notice('Healing reward · 6 combat rooms cleared')
+   }
+  }
   if(kind==='Miniboss'){
    this.gold(economy.minibossGold[this.floor])
    const relic=this.randomRelic()
@@ -611,7 +624,7 @@ class Game implements CombatBridge {
    : !this.levels.size&&treasure&&!this.scene.locked?'Treasure chest '+(treasure.y<this.room.y?'north':'south')+' · Guaranteed relic'
    : !this.room.used&&['Shop','Event','Blacksmith','Secret','Curse Altar'].includes(this.room.kind)?'F · '+this.room.kind:''
   const toast=performance.now()<this.toastTimer?this.toast:''
-  hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${this.floor===3?area.name:area.biomes[this.room.patch]}</div>${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
+  hud.innerHTML=`<div class="status"><div>${Math.ceil(this.hp)} / ${this.maxHP} HP</div><div class="hp">${bar(this.hp/this.maxHP)}</div><div class="gold">◆ ${this.save.gold}</div><div>${this.floor+1} · ${this.floor===3?area.name:area.biomes[this.room.patch]}</div>${this.scene.locked&&this.scene.totalWaves?`<div>Wave ${this.scene.wave} / ${this.scene.totalWaves}</div>`:''}${this.contract?`<div>${this.contract.name} · ${this.contract.remaining} left</div>`:''}</div>
    <div class="mini">${this.mapMarkup(false)}</div>
    ${boss?`<div class="boss ${boss.mini||this.floor===3?'miniboss-bar':''}">${this.scene.bossName}${boss.mini||this.floor===3?' · Phase '+(boss.phase+1)+(this.floor===3?' / 4':''):''}<div class="hp">${bar(boss.hp/boss.max)}</div></div>`:''}
    ${toast?`<div class="toast">${toast}</div>`:''}${hint?`<div class="roomHint">${hint}</div>`:''}

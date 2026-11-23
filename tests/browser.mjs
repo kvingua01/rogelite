@@ -117,10 +117,11 @@ try {
  await page.keyboard.down('KeyD')
  await page.waitForTimeout(530)
  await page.keyboard.up('KeyD')
- assert.equal(await read(g=>g.scene.foes.length),6)
+ assert.equal(await read(g=>g.scene.foes.length),3)
  assert.ok(await read(g=>g.scene.foes.every(f=>f.hp>=42&&f.damage>=14)))
  assert.deepEqual(await read(g=>[g.room.id,g.scene.locked]),[id,true],JSON.stringify(await read(g=>({p:[g.scene.player.x,g.scene.player.y],paused:g.paused,menu:g.menu}))))
- const timing=await read(g=>{
+ const timing=await read(async g=>{
+  const {enemyTiming}=await import('/src/balance.ts')
   const scene=g.scene,p=scene.player
   const melee=scene.foes.find(foe=>foe.role==='melee')
   const ranged=scene.foes.find(foe=>foe.role==='ranged')
@@ -142,7 +143,7 @@ try {
   const before=melee.attacks
   scene.enemy(melee,.016)
   const immediateDamage=health-g.hp
-  const meleeOnCooldown=melee.next>scene.elapsed&&melee.attacks===before+1
+  const meleeOnCooldown=Math.abs(melee.next-scene.elapsed-enemyTiming.meleeCooldown/.75)<.001&&melee.attacks===before+1
   const afterStrike=melee.x
   p.setPosition(melee.x-60,melee.y)
   scene.enemy(melee,.016)
@@ -153,7 +154,7 @@ try {
   const fired=scene.shots.length-shots
   const location={x:ranged.x,y:ranged.y}
   scene.enemy(ranged,.016)
-  const rangedCooldown=ranged.next>scene.elapsed&&scene.shots.length===shots+fired
+  const rangedCooldown=Math.abs(ranged.next-scene.elapsed-enemyTiming.rangedCooldown/.75)<.001&&scene.shots.length===shots+fired
   const rangedMovedOnCooldown=Math.hypot(ranged.x-location.x,ranged.y-location.y)>0
   g.hp=health;scene.invulnerable=scene.elapsed+1000
   return {chasing,indicators,immediateDamage,baseDamage:melee.damage,meleeOnCooldown,meleeMovedOnCooldown,fired,rangedCooldown,rangedMovedOnCooldown,
@@ -189,12 +190,25 @@ try {
  await page.mouse.click(area.x+area.width*melee.x/512,area.y+area.height*melee.y/288)
  await page.waitForTimeout(80)
  assert.ok(await read(g=>g.scene.foes.reduce((sum,f)=>sum+f.hp,0))<melee.total)
- await read(g=>{
+ const waveProgress=await read(g=>{
+  const scene=g.scene
+  g.enter(g.room.id,1,0)
   g.contract={name:'Blunted Oath',remaining:1}
-  for(const foe of g.scene.foes)g.scene.damage(foe,10000)
+  for(const foe of scene.foes.slice(0,2))scene.damage(foe,10000)
+  scene.update(0,16)
+  const partial=[scene.wave,scene.foes.length,scene.locked,g.room.cleared,g.roomsSinceHealing,g.contract.remaining]
+  scene.damage(scene.foes[0],10000)
+  scene.update(0,16)
+  const middle=[scene.wave,scene.foes.length,scene.locked,g.room.cleared,g.roomsSinceHealing,g.contract.remaining]
+  const safeSpawn=scene.foes.every(foe=>foe.x>20&&foe.x<492&&foe.y>20&&foe.y<268&&Math.hypot(foe.x-scene.player.x,foe.y-scene.player.y)>=76)
+  for(const foe of scene.foes)scene.damage(foe,10000)
+  scene.update(0,16)
+  return {partial,middle,safeSpawn,final:[g.room.cleared,scene.locked,g.blessed('Blunted Oath'),g.roomsSinceHealing]}
  })
- await page.waitForTimeout(140)
- assert.deepEqual(await read(g=>[g.room.cleared,g.scene.locked,g.blessed('Blunted Oath')]),[true,false,true])
+ assert.deepEqual(waveProgress.partial,[1,1,true,false,0,1])
+ assert.deepEqual(waveProgress.middle,[2,3,true,false,0,1])
+ assert.ok(waveProgress.safeSpawn)
+ assert.deepEqual(waveProgress.final,[true,false,true,1])
  await read(g=>{g.scene.player.setPosition(17,144)})
  await page.waitForTimeout(120)
  assert.equal(await read(g=>g.room.kind),'Entry')
@@ -524,6 +538,10 @@ try {
   scene.abyssAttack=function(foe,attack,aim){executed=attack;return perform.call(this,foe,attack,aim)}
   for(const [index,expected] of abyssEnemies.entries()){
    g.enter(room.id,0,0)
+   if(!scene.foes.some(f=>f.kind===index)){
+    for(const foe of scene.foes)scene.damage(foe,10000)
+    scene.update(0,16)
+   }
    const foe=scene.foes.find(f=>f.kind===index)
    scene.player.setPosition(215,141)
    scene.invulnerable=Infinity
@@ -531,7 +549,7 @@ try {
    const x=foe.x,shots=scene.shots.length
    executed=undefined
    scene.enemy(foe,.016)
-   profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:foe.next>scene.elapsed&&foe.sprite.angle===0&&
+   profiles.push({name:foe.abyss.name,attack:executed,expected:expected.patterns[0],worked:scene.foes.length===3&&Math.abs(foe.next-scene.elapsed-expected.cooldown*(foe.elite?.85:1)/.75)<.001&&foe.sprite.angle===0&&
     (foe.x!==x||scene.shots.length>shots||scene.pending.length>0||scene.foes.some(f=>f.summoned))})
   }
   g.enter(g.rooms.find(r=>r.kind==='Boss').id,0,0)
@@ -592,6 +610,50 @@ try {
  await page.reload()
  await page.getByText('The Last Keep',{exact:true}).waitFor()
  assert.deepEqual(await read(g=>[g.save.gold,g.save.bossMaterials,g.save.victories,g.save.abyssVictories]),abyssWallet)
+ const healing=await read(g=>{
+  const scene=g.scene
+  const rewards=[]
+  const waveSizes=[]
+  g.newRun()
+  const enoughCombat=()=>{
+   while(g.rooms.filter(room=>room.kind==='Combat').length<6)g.beginFloor(g.floor)
+  }
+  enoughCombat()
+  const normal=g.rooms.filter(room=>room.kind==='Combat')
+  const clearRoom=(room)=>{
+   g.enter(room.id,0,0)
+   for(let wave=0;wave<scene.totalWaves;wave++){
+    waveSizes.push(scene.foes.length)
+    for(const foe of scene.foes)scene.damage(foe,10000)
+    scene.update(0,16)
+   }
+   if(room.healingRewards?.length)rewards.push({room,floor:g.floor})
+  }
+  for(const room of normal.slice(0,6))clearRoom(room)
+  const first=rewards[0]?.room
+  const countAfterSix=g.roomsSinceHealing
+  g.enter(0,0,0)
+  g.enter(first.id,0,0)
+  const survivesReentry=scene.drops.includes(first.healingRewards[0])
+  const accessible=first.healingRewards.every(d=>d.x>21&&d.x<491&&d.y>22&&d.y<266&&scene.arenaOpen(d,12))
+  g.clear()
+  const countAfterReclear=g.roomsSinceHealing
+  g.beginFloor(1)
+  const transferred=g.room.healingRewards?.[0]
+  if(transferred){
+   g.hp=50
+   scene.player.setPosition(transferred.x,transferred.y)
+   scene.update(0,16)
+  }
+  const collected=!!transferred&&!scene.drops.includes(transferred)&&g.room.healingRewards.length===0&&g.hp===85
+  enoughCombat()
+  for(const room of g.rooms.filter(room=>room.kind==='Combat').slice(0,6))clearRoom(room)
+  return {rewards:rewards.length,waveSizes,countAfterSix,countAfterReclear,survivesReentry,accessible,collected,final:g.roomsSinceHealing}
+ })
+ assert.equal(healing.rewards,2)
+ assert.ok(healing.waveSizes.every(size=>size===3))
+ assert.ok(healing.survivesReentry&&healing.accessible&&healing.collected,JSON.stringify(healing))
+ assert.deepEqual([healing.countAfterSix,healing.countAfterReclear,healing.final],[0,0,0])
  assert.deepEqual(errors,[])
  console.log('Chromium smoke test passed')
 } finally {
