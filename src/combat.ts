@@ -172,6 +172,7 @@ export class Combat extends Phaser.Scene {
    const index=(room.patch+offsetForWave+i+(floor===3?0:floor*2))%kinds.length
    const foe=this.spawn(x,y,kinds[index],
     false,false,floor===3||specials<waveSize-2)
+   this.flash(x,y,16,0x9bc5e1)
    if(foe.role==='special')specials++
    return foe
   })
@@ -439,6 +440,7 @@ export class Combat extends Phaser.Scene {
   }
  }
  miniBlink(foe:Foe,angle:number){
+  if(!foe.large)return
   const p=this.player
   const spots=[angle+Math.PI*.6,angle-Math.PI*.6,angle+Math.PI].map(a=>({
    x:clamp(p.x+Math.cos(a)*98,44,W-44),y:clamp(p.y+Math.sin(a)*98,46,H-46),
@@ -465,7 +467,7 @@ export class Combat extends Phaser.Scene {
   const phase=foe.phase
   switch(attack){
    case 'lunge':
-    this.arenaStep(foe,angle,Math.min(110+phase*13,Math.max(0,Math.hypot(aim.x-foe.x,aim.y-foe.y)-23)),foe.radius)
+    if(foe.large)this.arenaStep(foe,angle,Math.min(110+phase*13,Math.max(0,Math.hypot(aim.x-foe.x,aim.y-foe.y)-23)),foe.radius)
     this.miniStrike(foe,angle,43,1.18)
     break
    case 'combo':
@@ -512,7 +514,7 @@ export class Combat extends Phaser.Scene {
    case 'trail':
     for(let i=0;i<4+phase;i++)this.queue(foe,i*95,()=>{
      const point={x:foe.x,y:foe.y}
-     this.arenaStep(foe,angle,18,foe.radius)
+     if(foe.large)this.arenaStep(foe,angle,18,foe.radius)
      this.miniPool(point,foe,16,1200+phase*240)
     })
     break
@@ -728,7 +730,10 @@ export class Combat extends Phaser.Scene {
    if(b.floor===0) for(const dy of [-36,36]){
     const x=clamp(foe.x-Math.cos(angle)*57,42,W-42)
     const y=clamp(foe.y-Math.sin(angle)*57+dy,42,H-42)
-    if(Math.hypot(p.x-x,p.y-y)>46)this.spawn(x,y,0)
+    if(Math.hypot(p.x-x,p.y-y)>=76){
+     this.spawn(x,y,0)
+     this.flash(x,y,16,0x9bc5e1)
+    }
    }
   }
   const bossPatterns=[[3,2,5,0],[4,2,4,5],[3,5,2,5]]
@@ -748,9 +753,11 @@ export class Combat extends Phaser.Scene {
    const color=foe.effect?effectColor[foe.effect]:tones[foe.kind]
    if(pattern===0||pattern===3) {
     const strike=()=>{
-     const distance=pattern===3?Math.min(85,Math.max(0,range-12)):0
-     foe.x=clamp(foe.x+Math.cos(foe.angle)*distance,26,W-26)
-     foe.y=clamp(foe.y+Math.sin(foe.angle)*distance,28,H-28)
+     if(foe.large&&pattern===3){
+      const distance=Math.min(85,Math.max(0,range-12))
+      foe.x=clamp(foe.x+Math.cos(foe.angle)*distance,26,W-26)
+      foe.y=clamp(foe.y+Math.sin(foe.angle)*distance,28,H-28)
+     }
      const reach=foe.large?48:encounters.meleeReach
      this.flash(foe.x,foe.y,reach,color,foe.angle)
      const impactAngle=Math.atan2(p.y-foe.y,p.x-foe.x)

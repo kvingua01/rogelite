@@ -171,6 +171,15 @@ try {
  })
  assert.ok(timing?.chasing&&timing.indicators===0&&timing.waited&&timing.reset&&timing.repeatWait&&timing.repeatAttack&&timing.strikeDamage===Math.round(timing.baseDamage*.75)&&timing.meleeOnCooldown&&timing.meleeMovedOnCooldown&&
   timing.fired===1&&timing.rangedCooldown&&timing.rangedMovedOnCooldown&&timing.rangedHeldGround&&timing.upright,JSON.stringify(timing))
+ const blinkGuard=await read(g=>{
+  const scene=g.scene
+  const foe=scene.foes[0]
+  const x=foe.x,y=foe.y,health=g.hp
+  scene.player.setPosition(256,144)
+  scene.miniBlink(foe,0)
+  return foe.x===x&&foe.y===y&&g.hp===health
+ })
+ assert.ok(blinkGuard)
  const charger=await read(g=>{
   const scene=g.scene
   const foe=scene.spawn(300,144,3)
